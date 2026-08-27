@@ -3,7 +3,7 @@
 A personal music application for two people (you and your partner), inspired by Spotify, with a premium **glassmorphism** interface. Built with React Native + Expo, runnable entirely on **free tools and services with a $0 budget**.
 
 > **Repository:** https://github.com/junior0629/music.git
-> **Status:** Pre-development — Phase 1 about to start. See [PHASES.md](./PHASES.md).
+> **Status:** Phase 1 complete (UI shell, glass design, mock data, logging). Phase 2 next. See [PHASES.md](./PHASES.md).
 
 ---
 
@@ -156,8 +156,8 @@ The work is split into 5 phases. **Phase 1 first, Phase 2 is the priority** (rea
 
 | Phase | Goal | Status |
 |---|---|---|
-| 1 | App shell: navigation, Home/Search/Library/Settings, glass UI primitives, mini-player placeholder, dark/light theme, design tokens, Zustand store skeletons | ⏳ About to start |
-| 2 | `MusicProvider` interface + `PipedProvider` + real search + real playback + mini-player wired to player store | 🔒 Waiting on Phase 1 |
+| 1 | App shell: navigation, Home/Search/Library/Settings, glass UI primitives, mini-player placeholder, dark/light theme, design tokens, Zustand store skeletons | ✅ Complete |
+| 2 | `MusicProvider` interface + `PipedProvider` + real search + real playback + mini-player wired to player store | ⏳ Next |
 | 3 | SQLite: playlists CRUD, favorites, recently played, queue persistence | 🔒 Waiting on Phase 2 |
 | 4 | Downloads (file cache), local music import, storage management | 🔒 Waiting on Phase 3 |
 | 5 | Partner features (export/import as JSON), stats page, sleep timer, optional lyrics/equalizer/crossfade | 🔒 Waiting on Phase 4 |
@@ -195,19 +195,32 @@ The work is split into 5 phases. **Phase 1 first, Phase 2 is the priority** (rea
 
 ## How to run
 
-Phase 1 hasn't started yet. Once it does, the dev flow will be:
+The Phase 1 build is ready to run. From the project root:
 
 ```bash
-npm install
-npx expo start --web      # browser test target (primary, fastest iteration)
-npx expo start            # phone test target via Expo Go (QR code)
+npm install            # only needed the first time, or after dependency changes
+npx expo start --web   # browser test target (primary — opens a tab with hot reload)
+npx expo start         # phone test target via Expo Go (scan the QR code)
 ```
 
 **Web is the primary test target** for UI, theme, navigation, mock data, and (Phase 2+) real search and playback. Phone (Expo Go) is reserved for native-only features: haptics feel, background audio, real touch performance, mid-range Android glass perf, and anything else the browser genuinely can't do.
 
-By Phase 4 (downloads + background audio) we'll need an **EAS dev build**, which is also free but requires an Expo account.
+**What's working right now (Phase 1):**
+- All 4 tabs (Home, Search, Library, Settings) navigable
+- Glassmorphism UI: frosted glass surfaces, floating nav, mini-player placeholder
+- Dark / light / system theme toggle, persisted across restarts
+- Mock music data (8 tracks, clearly labeled as mock — real data comes in Phase 2)
+- Search debounced, favorites toggle (in-memory until Phase 3)
+- Dev log panel (top-left floating button in dev mode) — tap to see live logs, errors
+- Global error boundary — any uncaught render error shows a glass-styled fallback, no white screen
 
-See [PHASES.md](./PHASES.md) for where we are right now.
+**What's NOT working yet (intentional, comes in later phases):**
+- Real music search and playback (Phase 2)
+- Playlists persist across restart (Phase 3 — SQLite)
+- Downloads and local file import (Phase 4)
+- Partner features, stats page (Phase 5)
+
+By Phase 4 (downloads + background audio) we'll need an **EAS dev build**, which is also free but requires an Expo account. See [PHASES.md](./PHASES.md) for the full phase tracker.
 
 ## Testing on web vs. phone — quick reference
 
