@@ -199,9 +199,26 @@ Phase 1 hasn't started yet. Once it does, the dev flow will be:
 
 ```bash
 npm install
-npx expo start
+npx expo start --web      # browser test target (primary, fastest iteration)
+npx expo start            # phone test target via Expo Go (QR code)
 ```
 
-Then scan the QR code with **Expo Go** on your phone (iOS or Android). This works through Phase 2. By Phase 4 (downloads + background audio) we'll need an **EAS dev build**, which is also free but requires an Expo account.
+**Web is the primary test target** for UI, theme, navigation, mock data, and (Phase 2+) real search and playback. Phone (Expo Go) is reserved for native-only features: haptics feel, background audio, real touch performance, mid-range Android glass perf, and anything else the browser genuinely can't do.
+
+By Phase 4 (downloads + background audio) we'll need an **EAS dev build**, which is also free but requires an Expo account.
 
 See [PHASES.md](./PHASES.md) for where we are right now.
+
+## Testing on web vs. phone — quick reference
+
+| What | Web (`--web`) | Phone (Expo Go) |
+|---|---|---|
+| UI, theme, navigation, mock data | ✅ | ✅ |
+| Real music search (Phase 2) | ✅ | ✅ |
+| Real playback (Phase 2) | ✅ via HTML5 audio | ✅ via expo-av |
+| SQLite (Phase 3) | ⚠️ IndexedDB fallback | ✅ |
+| Downloads (Phase 4) | ⚠️ limited | ✅ |
+| Background audio | ❌ | ✅ (dev build) |
+| Haptics | ❌ silent | ✅ |
+
+Storage and audio are abstracted behind platform-detecting service modules, so the rest of the app doesn't care which runtime it's on.

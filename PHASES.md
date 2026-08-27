@@ -16,6 +16,8 @@
 - ✅ UI direction locked: premium glassmorphism
 - ✅ Project structure defined
 - ✅ README + this tracker created
+- ✅ Web-compat strategy: Expo web dev server (`npx expo start --web`) as primary test target, phone (Expo Go) for native-only features
+- ✅ Logging strategy: in-house logger + global error boundary + in-app dev log panel (no paid Sentry/etc.)
 - ⏳ Next: await your "start" to begin Phase 1
 
 ---
@@ -87,17 +89,35 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - [ ] Tab content fade-in
 - [ ] Card press scale feedback
 
-### 1.8 Accessibility minimums
+### 1.8 Web compatibility (test in browser, not just phone)
+- [ ] `app.json` configured with `web` bundler
+- [ ] `services/storage/` abstraction: SQLite on native, IndexedDB on web
+- [ ] `services/player/` abstraction: `expo-av` on native, HTML5 `<audio>` on web
+- [ ] `expo-blur` confirmed to render via CSS `backdrop-filter` in browser
+- [ ] Dev banner in dev mode: "Web preview — SQLite → IndexedDB, expeo-av → HTML5 audio"
+- [ ] Run target documented: `npx expo start --web`
+
+### 1.9 Logging & error tracking
+- [ ] `src/utils/logger.ts` — wrapper around console with levels (debug/info/warn/error), context (screen/phase/timestamp), and a `measure()` helper
+- [ ] `src/components/ErrorBoundary.tsx` — global React error boundary with glass-styled fallback (error message, copy details, reload)
+- [ ] `src/utils/withErrorLogging.ts` — async wrapper so thrown errors are logged, never swallowed
+- [ ] `src/components/DevLogPanel.tsx` — floating in-app panel (dev only) showing last 50 logs, expandable, filterable, copyable
+- [ ] Global unhandled handlers: `ErrorUtils.setGlobalHandler` (RN) + `process.on('unhandledRejection')` (web) → logger
+- [ ] Startup banner logged on every app start: version, phase, platform, provider
+
+### 1.10 Accessibility minimums
 - [ ] All touch targets ≥ 44pt
 - [ ] `accessibilityLabel` on icon-only buttons
 - [ ] Text contrast checked against glass surfaces (WCAG AA)
 
 **Definition of done for Phase 1:**
-- [ ] `npx expo start` runs without errors
-- [ ] App opens in Expo Go on a real phone
-- [ ] All 4 tabs navigable, glass UI visible
+- [ ] `npx expo start --web` runs without errors and opens in a browser tab
+- [ ] App also opens in Expo Go on a real phone
+- [ ] All 4 tabs navigable, glass UI visible on both web and phone
 - [ ] Toggling dark/light theme works and persists across restart
 - [ ] Mini-player placeholder visible above floating nav
+- [ ] Dev log panel shows live logs on both web and phone
+- [ ] Unhandled error → ErrorBoundary catches it, log panel shows it, app doesn't white-screen
 - [ ] No crashes, no console errors
 - [ ] README + PHASES updated to reflect Phase 1 complete
 
