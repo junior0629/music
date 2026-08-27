@@ -1,0 +1,207 @@
+# Music — Personal Music App
+
+A personal music application for two people (you and your partner), inspired by Spotify, with a premium **glassmorphism** interface. Built with React Native + Expo, runnable entirely on **free tools and services with a $0 budget**.
+
+> **Repository:** https://github.com/junior0629/music.git
+> **Status:** Pre-development — Phase 1 about to start. See [PHASES.md](./PHASES.md).
+
+---
+
+## Why this app exists
+
+You want a personal music app that's:
+- **Real** — searches the internet for actual music (no demo data, no fake APIs).
+- **Simple** — maintainable by one person.
+- **Free** — $0 to build, $0 to run.
+- **Beautiful** — premium frosted-glass UI, not a Spotify clone.
+- **For two** — you and your partner, no need for cloud infra, accounts, or scale.
+
+---
+
+## What it does (target feature set)
+
+### Core
+- **Online music search** — real-time, with thumbnail / title / artist / duration / play / add-to-playlist / favorite / download.
+- **Full music player** — play, pause, previous, next, seek, volume, shuffle, repeat, queue, background playback.
+- **Mini-player** — persistent at the bottom, glass-styled.
+- **Home** — greeting, recently played, playlists, favorites.
+- **Search** — dedicated screen, returns songs, artists, albums, videos.
+- **Library** — favorites, playlists, downloads, local music, recently played.
+- **Playlists** — create / rename / delete / add / remove / reorder / shuffle / play.
+- **Favorites** — favorite/unfavorite, persisted locally.
+- **Downloads / Offline** — download where supported, manage storage, import local music files.
+- **Music statistics** — recently played, most played, listening time.
+
+### Nice-to-haves (only if easy)
+- Sleep timer
+- Lyrics
+- Equalizer
+- Crossfade
+- Smart shuffle
+- Recently added
+- Mood playlists
+- Dark / light mode
+- Dynamic album-artwork background
+
+### Partner features (kept simple, no cloud)
+- Shared playlists (via export / import — JSON files)
+- Shared music collection
+- Playlist export / import
+
+---
+
+## Visual direction — Glassmorphism
+
+Premium frosted-glass aesthetic. See the design brief for full details; key principles:
+
+- Dark, atmospheric gradient background
+- Background subtly shifts based on the currently playing album artwork (extracted dominant colors → blurred gradient)
+- Frosted glass panels with `rgba()` transparency, backdrop blur, soft borders, soft shadows, large rounded corners
+- Floating glass cards for playlists, search results, recommendations
+- Floating glass bottom navigation (not a solid tab bar)
+- Full-screen blurred album artwork on the Now Playing screen
+- Soft purple / blue / pink accent gradients
+- Subtle animations: fade/slide, gentle scale on artwork, smooth play-button transitions
+
+**Performance constraint:** Blur is expensive on mid-range Android. We use real `BlurView` only where it pays off (player screen, floating nav, mini-player). For cards in scrollable lists, we use translucent solids with a subtle gradient overlay — visually similar, ~5× cheaper to render.
+
+---
+
+## Technology
+
+### Confirmed
+| Layer | Choice | Why |
+|---|---|---|
+| Framework | **React Native + Expo (managed)** | Easiest free cross-platform, official blur/gradient/haptics modules |
+| Language | **TypeScript** | Type safety on the `MusicProvider` interface matters |
+| Navigation | **Expo Router** | File-based, official, supports the spec's folder structure |
+| State | **Zustand** | Lightweight, perfect for a 2-user app — 3 stores total (player, library, theme) |
+| Local DB | **expo-sqlite** | Playlists, favorites, history persist across restarts |
+| Key-value | **AsyncStorage** | Theme preference, volume, last track |
+| Audio | **expo-av** | Sufficient for Phase 1–3. Upgrade candidate: `react-native-track-player` for background playback (Phase 4+) |
+| Animations | **react-native-reanimated** | Standard for RN, works with Expo |
+| Blur | **expo-blur** | Cross-platform BlurView |
+| Gradients | **expo-linear-gradient** | Backgrounds, accent gradients |
+| Haptics | **expo-haptics** | Premium feel on play/pause, favorite |
+
+### Music source
+- **Primary:** [Piped](https://github.com/TeamPiped/Piped) public REST API — calls YouTube under the hood, returns real stream URLs, **no API key, no server, $0**.
+- **Swap-ready:** all music calls go through a `MusicProvider` interface (see [Architecture](#architecture)). Swapping to yt-dlp-via-proxy, Jamendo, Deezer, or anything else is a one-file change.
+
+> **Honest caveat:** YouTube streaming via Piped sits in a legal gray area. For two personal users the risk is minimal, but it's on the record here so we can revisit the choice if it ever becomes a concern.
+
+---
+
+## Architecture
+
+The whole app talks to music through one interface. Everything else is independent.
+
+```
+MusicProvider (interface)
+├── search(query, opts?)          → SearchResults
+├── getTrack(id)                  → Track
+├── getAlbum(id)                  → Album
+├── getArtist(id)                 → Artist
+└── getStreamUrl(trackId)         → StreamInfo
+```
+
+**Phase 1 implementation:** `PipedProvider` (calls public Piped instances).
+**Phase 5 alternative:** A self-hosted yt-dlp proxy, or Jamendo, or Deezer previews.
+
+### Project structure
+```
+music/
+├── app/                          # Expo Router screens
+│   ├── (tabs)/
+│   │   ├── _layout.tsx
+│   │   ├── index.tsx             # Home
+│   │   ├── search.tsx
+│   │   ├── library.tsx
+│   │   └── settings.tsx
+│   ├── player/[id].tsx           # Full-screen Now Playing
+│   ├── playlist/[id].tsx
+│   └── _layout.tsx               # Root layout
+├── src/
+│   ├── components/               # MiniPlayer, GlassCard, TrackRow, FloatingNav, ...
+│   ├── screens/                  # Screen logic if not in app/
+│   ├── services/
+│   │   ├── music/                # MusicProvider abstraction
+│   │   │   ├── types.ts          # MusicProvider interface
+│   │   │   ├── PipedProvider.ts  # YouTube via Piped
+│   │   │   └── index.ts          # getProvider()
+│   │   ├── player/               # expo-av wrapper
+│   │   └── storage/              # File cache, downloads
+│   ├── database/                 # SQLite setup + migrations
+│   ├── store/                    # Zustand stores
+│   │   ├── playerStore.ts
+│   │   ├── libraryStore.ts
+│   │   └── themeStore.ts
+│   ├── hooks/
+│   ├── types/
+│   ├── theme/                    # Design tokens (colors, radii, spacing)
+│   └── utils/
+├── assets/                       # App icon, splash, fonts (if any)
+├── app.json                      # Expo config
+├── package.json
+├── tsconfig.json
+├── babel.config.js
+└── PHASES.md                     # Phase tracker — see this for current status
+```
+
+---
+
+## Phased delivery
+
+The work is split into 5 phases. **Phase 1 first, Phase 2 is the priority** (real search + real playback). We do not move to the next phase until the previous one runs cleanly. See **[PHASES.md](./PHASES.md)** for the live tracker.
+
+| Phase | Goal | Status |
+|---|---|---|
+| 1 | App shell: navigation, Home/Search/Library/Settings, glass UI primitives, mini-player placeholder, dark/light theme, design tokens, Zustand store skeletons | ⏳ About to start |
+| 2 | `MusicProvider` interface + `PipedProvider` + real search + real playback + mini-player wired to player store | 🔒 Waiting on Phase 1 |
+| 3 | SQLite: playlists CRUD, favorites, recently played, queue persistence | 🔒 Waiting on Phase 2 |
+| 4 | Downloads (file cache), local music import, storage management | 🔒 Waiting on Phase 3 |
+| 5 | Partner features (export/import as JSON), stats page, sleep timer, optional lyrics/equalizer/crossfade | 🔒 Waiting on Phase 4 |
+
+---
+
+## Development principles (so this stays simple to maintain)
+
+1. **No fake data, ever.** Mock UI in Phase 1 is clearly labeled as mock in code comments. By Phase 2, every result is from a real source.
+2. **Provider behind an interface.** All music logic is one swappable class. Nothing else in the app calls Piped/YouTube directly.
+3. **Design tokens in one place.** [src/theme/](src/theme/) holds all colors, radii, spacing, typography. No hex codes scattered through components.
+4. **Three Zustand stores, no more.** Player, library, theme. Avoid sprawling state.
+5. **Translucent solids over blur where blur isn't needed.** Mid-range Android perf matters.
+6. **Test on a real low-end Android early.** Especially during Phase 1's glassmorphism work.
+7. **Stop at the end of each phase.** Build, run, confirm, then move on.
+
+---
+
+## $0 budget — what we're relying on
+
+- **Expo** — free SDK, free dev builds via EAS (limited free tier)
+- **Piped public instances** — community-run, free, no key
+- **SQLite** — local, free
+- **No hosting, no paid DB, no paid auth, no analytics, no push, no payments**
+- If a free-tier limit appears, the spec is small enough we can self-host one tiny service (Render free tier) — but we are not building that until we hit a wall.
+
+---
+
+## Legal notes
+
+- YouTube streaming via Piped is in a legal gray area. Acceptable for two personal users; not for distribution. Documented, not ignored.
+- The spec is small enough that we can swap providers later if needed (the `MusicProvider` interface exists for this reason).
+
+---
+
+## How to run
+
+Phase 1 hasn't started yet. Once it does, the dev flow will be:
+
+```bash
+npm install
+npx expo start
+```
+
+Then scan the QR code with **Expo Go** on your phone (iOS or Android). This works through Phase 2. By Phase 4 (downloads + background audio) we'll need an **EAS dev build**, which is also free but requires an Expo account.
+
+See [PHASES.md](./PHASES.md) for where we are right now.
