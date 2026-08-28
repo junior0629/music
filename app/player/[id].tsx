@@ -359,16 +359,25 @@ export default function NowPlayingScreen() {
         {/* Middle: artwork on the left, lyrics on the right */}
         <View style={styles.middle}>
           <View style={styles.artColumn}>
-            <Animated.View style={[styles.artDisc, artSpinStyle]}>
-              {/* Image is positioned absolutely to all four edges so
-                  it stretches to fill the disc, bypassing RN Image's
-                  intrinsic sizing (which on web can render smaller
-                  than the parent's width/height 100%). */}
-              <Image
-                source={{ uri: artUri }}
-                style={styles.artImage}
-                resizeMode="cover"
-              />
+            <Animated.View
+              style={[
+                styles.artDisc,
+                artSpinStyle,
+                // The artwork is the disc's CSS background. We tried
+                // using RN's <Image> element with resizeMode="cover",
+                // but on web the Image element renders the photo at
+                // its natural size with the disc's backgroundColor
+                // showing through as letterbox bars. Using a CSS
+                // background-image guarantees the photo scales to
+                // cover the entire 180x180 disc, edge to edge, with
+                // no bars. backgroundImage isn't in RN's standard
+                // ViewStyle type, but RN Web does support it at
+                // runtime (and it's a standard CSS property).
+                artUri
+                  ? ({ backgroundImage: `url("${artUri}")` } as any)
+                  : null,
+              ]}
+            >
               {/* Center spindle hole — the small dark circle at the
                   center of a vinyl record / CD */}
               <View style={styles.artSpindle} />
@@ -612,26 +621,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   // Vinyl-record style artwork. The disc is a single 180x180 round
-  // box with overflow:hidden. The image is positioned absolutely to
-  // all four edges so it stretches to fill the disc, bypassing the
-  // RN Image element's intrinsic sizing quirks on web. resizeMode
-  // is set to 'cover' on the Image so the photo scales to fill the
-  // 180x180 frame.
+  // box with overflow:hidden. The artwork is set as the disc's CSS
+  // background-image (via inline style in the JSX), with
+  // backgroundSize:'cover' so the photo scales to fill the entire
+  // circle edge-to-edge with no letterbox bars.
+  // (backgroundSize/backgroundPosition/backgroundRepeat are CSS
+  // properties RN Web supports on View; not in the standard
+  // ViewStyle type but valid at runtime.)
   artDisc: {
     width: 180,
     height: 180,
     borderRadius: 90,
     overflow: 'hidden',
     backgroundColor: '#000',
-  },
-  artImage: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: '100%',
-    height: '100%',
+    ...({
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+      backgroundRepeat: 'no-repeat',
+    } as any),
   },
   artSpindle: {
     position: 'absolute',
