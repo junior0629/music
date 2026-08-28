@@ -223,34 +223,34 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 
 **Goal:** Persistence. Favorites survive a restart. Playlists work. Recently played is tracked.
 
-### 3.1 Database
-
-| Task | Files | Notes |
-|---|---|---|
-| Schema definition | `src/database/schema.ts` | `playlists` (id, name, created_at), `playlist_tracks` (playlist_id, track_id, position), `favorites` (track_id, added_at), `recently_played` (track_id, played_at), `play_count` (track_id, count, last_played_at) |
-| DB init + migrations | `src/database/index.ts` | Native: `expo-sqlite` (`openDatabaseAsync`, `execAsync`). Web: IndexedDB via the existing `services/storage` abstraction. Versioned migrations. |
-| Typed query helpers | `src/database/queries.ts` | `addFavorite`, `removeFavorite`, `listFavorites`, `createPlaylist`, `addTrackToPlaylist`, `reorderPlaylist`, `deletePlaylist`, `recordPlay`, `recentlyPlayed(limit=50)`, `topPlayed(limit=20)`, `topArtists(limit=10)` |
-| Hydrate `useLibraryStore` on app boot | `app/_layout.tsx` or `src/store/libraryStore.ts` | Async load from DB → set state. Don't block the first render. |
+### 3.1 Database layer
+- [ ] `src/database/schema.ts` — table types: `playlists` (id, name, created_at), `playlist_tracks` (playlist_id, track_id, position), `favorites` (track_id, added_at), `recently_played` (track_id, played_at), `play_count` (track_id, count, last_played_at)
+- [ ] `src/database/index.ts` — DB init + versioned migrations
+  - [ ] Native: `expo-sqlite` (`openDatabaseAsync`, `execAsync`)
+  - [ ] Web: IndexedDB via the existing `services/storage` abstraction
+  - [ ] Single `getDb()` returns a uniform `Db` interface regardless of platform
+- [ ] `src/database/queries.ts` — typed query helpers
+  - [ ] `addFavorite(track)`, `removeFavorite(trackId)`, `listFavorites()`
+  - [ ] `createPlaylist(name)`, `renamePlaylist(id, name)`, `deletePlaylist(id)`
+  - [ ] `addTrackToPlaylist(playlistId, track, position?)`, `removeTrackFromPlaylist(...)`, `reorderPlaylist(...)`
+  - [ ] `recordPlay(track)`, `recentlyPlayed(limit=50)`, `topPlayed(limit=20)`, `topArtists(limit=10)`
+- [ ] Hydrate `useLibraryStore` on app boot (in `app/_layout.tsx` or `src/store/libraryStore.ts`) — async load from DB → set state, don't block first render
 
 ### 3.2 Library logic
-
-| Task | Notes |
-|---|---|
-| Favorites: add/remove/list | Hook into the existing heart icon on search results and Now Playing. UI stays identical; just routes through DB on web. |
-| Playlists: create / rename / delete | Modal or inline sheet. Names up to ~40 chars. |
-| Playlists: add / remove / reorder tracks | Add from search result's overflow menu. Reorder via long-press drag in playlist detail. |
-| Recently played: auto-track on play | Increment on every `play()` call in `playerStore`. Keep last 50. |
-| Play count: increment on play | `play_count` row updated each time. Cheap UPSERT. |
+- [ ] Favorites: hook the existing heart icon on search results and Now Playing through DB on web; keep UI identical
+- [ ] Playlists CRUD: create / rename / delete via modal or inline sheet; names up to ~40 chars
+- [ ] Playlists: add / remove tracks from search result overflow menu (⋯)
+- [ ] Playlists: reorder tracks via long-press drag in playlist detail
+- [ ] Recently played: auto-track on every `play()` call in `playerStore`; keep last 50
+- [ ] Play count: increment on every play via cheap UPSERT in `play_count`
 
 ### 3.3 Library screen
-
-| Task | Notes |
-|---|---|
-| Favorites section lists favorited tracks | Read from `useLibraryStore.favorites`; tappable to play. |
-| Playlists section lists all playlists | Tile per playlist with cover mosaic (first 4 track thumbs). |
-| Tap playlist → playlist detail screen | New route `app/library/playlist/[id].tsx`. |
-| Add-to-playlist works from search results | Overflow menu (⋯) on each result row → "Add to playlist" sheet. |
-| Recently Played section | Already a tile on Home; wire to real data. |
+- [ ] Favorites section lists favorited tracks from `useLibraryStore.favorites`; tappable to play
+- [ ] Playlists section lists all playlists; tile per playlist with cover mosaic (first 4 track thumbs)
+- [ ] Tap playlist → new route `app/library/playlist/[id].tsx` (playlist detail)
+- [ ] "Add to playlist" works from search results via overflow menu → sheet
+- [ ] Recently Played section on Home wired to real data (not mock)
+- [ ] Downloads tile + Local Music tile stay as placeholders until Phase 4
 
 **Definition of done for Phase 3:**
 - [ ] Favorite a track → restart app → it's still there
@@ -258,63 +258,71 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - [ ] Recently played updates after each play
 - [ ] Reorder tracks in a playlist (drag to move)
 - [ ] All five tables populated correctly; manual DB inspect shows sensible rows
+- [ ] Web and native both pass the above (no platform-specific bugs)
 
 ---
 
 ## Phase 4 — Downloads + local music import
 
-**Goal:** Save tracks for offline, import local files.
+**Goal:** Save tracks for offline, import local files. Both work in airplane mode.
 
-### 4.1 Downloads
-- [ ] `src/services/storage/cache.ts` — file cache manager
-- [ ] Download button on search results (where supported)
-- [ ] Downloads screen: progress, completed, delete
-- [ ] Storage used display
-- [ ] Eviction policy: oldest-first when over budget
+### 4.1 File cache + downloads
+- [ ] `src/services/storage/cache.ts` — file cache manager (path, size, mtime, eviction)
+- [ ] Download button on search results (where supported by the underlying source)
+- [ ] Downloads screen: list of in-progress, completed, failed; per-row progress + delete
+- [ ] Storage-used display (MB / budget)
+- [ ] Eviction policy: oldest-first when over a configurable budget
+- [ ] Downloaded tracks play from cache, not from the network
 
 ### 4.2 Local music import
-- [ ] `expo-document-picker` for file selection
-- [ ] Read metadata (id3) for local files
-- [ ] Local Music section in Library
+- [ ] `expo-document-picker` for file selection (MP3, M4A, FLAC)
+- [ ] Read metadata (id3 / MP4 tags) for title, artist, album, duration, artwork
+- [ ] Local Music section in Library lists imported tracks
+- [ ] Local tracks are playable end-to-end (play, pause, seek, mini-player, NowPlaying)
+
+### 4.3 Native build
+- [ ] **EAS dev build** (Expo Go has file-system limits)
+- [ ] Verify `expo-sqlite`, `expo-file-system`, `expo-document-picker` all work on a real Android build
+- [ ] EAS free tier is sufficient — no paid plan needed
 
 **Definition of done for Phase 4:**
 - [ ] Download a track → it plays from cache
 - [ ] Delete a download
-- [ ] Import a local MP3 → it appears in Local Music
-- [ ] Both work in airplane mode
-
-**Note:** This phase likely requires an **EAS dev build** (Expo Go has file-system limits). EAS free tier is sufficient.
+- [ ] Import a local MP3 → it appears in Local Music and plays
+- [ ] Both downloads and local music work in airplane mode
+- [ ] EAS dev build installs on a real Android device and passes the above
 
 ---
 
 ## Phase 5 — Partner features, stats, extras
 
-**Goal:** Share playlists between you and your partner, see your listening stats, optional polish.
+**Goal:** Share playlists between you and your partner, see your listening stats, optional polish. All data stays local.
 
 ### 5.1 Partner features (no cloud)
-- [ ] Playlist export → JSON file
-- [ ] Playlist import → reads JSON file
-- [ ] "Shared music collection" — a single shareable JSON containing all favorites
+- [ ] Playlist export → JSON file (share via OS share sheet)
+- [ ] Playlist import → reads a JSON file, validates schema, dedupes by track id
+- [ ] "Shared music collection" — a single shareable JSON containing all favorites + playlists
+- [ ] Round-trip test: export on device A → import on device B → identical library
 
-### 5.2 Statistics
-- [ ] Stats page
-- [ ] Recently played (last 50)
-- [ ] Most played songs
-- [ ] Most played artists
-- [ ] Total listening time
-- [ ] All from local data — no analytics SDK
+### 5.2 Statistics (all from local DB)
+- [ ] Stats page (`app/stats.tsx` or a tab)
+- [ ] Recently played (last 50) — list view
+- [ ] Most played songs — top 20
+- [ ] Most played artists — top 10 (aggregated from `play_count`)
+- [ ] Total listening time — sum of `play_count × track.duration` (or session-tracked time, whichever is more accurate)
+- [ ] No analytics SDK; no network calls
 
 ### 5.3 Optional extras (only if easy)
-- [ ] Sleep timer
-- [ ] Lyrics (if a free source works)
-- [ ] Equalizer (if `expo-av` supports it)
-- [ ] Crossfade
-- [ ] Smart shuffle
+- [ ] Sleep timer (fade-out or hard stop after N minutes)
+- [ ] Lyrics: already in via Phase 2.7 ✅
+- [ ] Equalizer (if `expo-audio` exposes one on native)
+- [ ] Crossfade between tracks
+- [ ] Smart shuffle (avoid repeating recent N tracks)
 
 **Definition of done for the project:**
 - [ ] All 4 spec features (search, player, home, library) work end-to-end
 - [ ] All partner features work via export/import
-- [ ] Stats page shows real data
+- [ ] Stats page shows real data from the local DB
 - [ ] App feels premium on a real mid-range Android
 - [ ] No crashes during normal use
 
