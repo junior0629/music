@@ -28,6 +28,14 @@ export interface AudioService {
   onEnded(listener: () => void): () => void;
   onError(listener: (message: string) => void): () => void;
   onBuffering(listener: (isBuffering: boolean) => void): () => void;
+  /**
+   * Fires whenever the underlying player reports it's actually playing
+   * or actually paused. This is distinct from the store's `play()` /
+   * `pause()` calls because the IFrame can auto-play in onReady after
+   * the first user gesture, in which case the store never calls
+   * `play()` but the player is still playing.
+   */
+  onPlayingChange(listener: (isPlaying: boolean) => void): () => void;
 }
 
 // ============================================================
@@ -144,6 +152,7 @@ class YouTubeIFrameAudioService implements AudioService {
   private endedListeners = new Set<() => void>();
   private errorListeners = new Set<(m: string) => void>();
   private bufferingListeners = new Set<(b: boolean) => void>();
+  private playingListeners = new Set<(p: boolean) => void>();
   private positionPollHandle: ReturnType<typeof setInterval> | null = null;
   private bufferingWatchdog: ReturnType<typeof setTimeout> | null = null;
   private lastKnownState = -1;
@@ -334,6 +343,11 @@ class YouTubeIFrameAudioService implements AudioService {
     return () => this.bufferingListeners.delete(listener);
   }
 
+  onPlayingChange(listener: (isPlaying: boolean) => void): () => void {
+    this.playingListeners.add(listener);
+    return () => this.playingListeners.delete(listener);
+  }
+
   private handleStateChange(state: number): void {
     if (this.destroyed) return;
     this.lastKnownState = state;
@@ -348,11 +362,16 @@ class YouTubeIFrameAudioService implements AudioService {
 
     if (state === STATE_PLAYING) {
       this.startPositionPolling();
+      this.playingListeners.forEach((l) => l(true));
     } else {
       this.stopPositionPolling();
+      if (state === STATE_PAUSED) {
+        this.playingListeners.forEach((l) => l(false));
+      }
     }
 
     if (state === STATE_ENDED) {
+      this.playingListeners.forEach((l) => l(false));
       this.endedListeners.forEach((l) => l());
     }
   }
@@ -441,6 +460,7 @@ class NativeAudioService implements AudioService {
   private endedListeners = new Set<() => void>();
   private errorListeners = new Set<(m: string) => void>();
   private bufferingListeners = new Set<(b: boolean) => void>();
+  private playingListeners = new Set<(p: boolean) => void>();
   private positionPollHandle: ReturnType<typeof setInterval> | null = null;
   private createPlayer: any;
 
@@ -517,6 +537,11 @@ class NativeAudioService implements AudioService {
     return () => this.bufferingListeners.delete(listener);
   }
 
+  onPlayingChange(listener: (isPlaying: boolean) => void): () => void {
+    this.playingListeners.add(listener);
+    return () => this.playingListeners.delete(listener);
+  }
+
   private wirePlayerEvents(p: any): void {
     if (typeof p.addListener === 'function') {
       try {
@@ -568,6 +593,7 @@ class NoopAudioService implements AudioService {
   onEnded(): () => void { return () => undefined; }
   onError(): () => void { return () => undefined; }
   onBuffering(): () => void { return () => undefined; }
+  onPlayingChange(): () => void { return () => undefined; }
 }
 
 let _instance: AudioService | null = null;

@@ -85,8 +85,17 @@ export const usePlayerStore = create<PlayerState>((set, get) => {
       audio.onBuffering((b) => set({ isBuffering: b })),
     );
     unsubscribers.push(
+      audio.onPlayingChange((p) => {
+        // Authoritative source: the IFrame tells us when it's actually
+        // playing. This handles the auto-play-in-onReady case where the
+        // store never called play() but the IFrame started anyway.
+        set({ isPlaying: p });
+      }),
+    );
+    unsubscribers.push(
       audio.onEnded(() => {
         logger.info('audio.ended');
+        set({ isPlaying: false });
         // Auto-advance to next track
         get().next().catch((e) => logger.error('next() failed', { err: String(e) }));
       }),

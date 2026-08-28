@@ -118,16 +118,14 @@ export default function NowPlayingScreen() {
     return () => ac.abort();
   }, [track?.id]);
 
-  // Active lyric line: synced → by timestamp with a small lookahead so
-  // the line is highlighted slightly before the singer actually starts
-  // (matches how karaoke / Spotify / Apple Music treat LRC timestamps
-  // as "the line is about to be sung" rather than "exact syllable").
-  // Plain → evenly distribute across duration.
-  // The lookahead is larger for synced lyrics (2.5s) because LRC
-  // timestamps are almost always a bit late vs. the actual vocal.
-  // The user can also tap a line to seek there, which both jumps
-  // playback and lets them nudge the offset.
-  const LOOKAHEAD_SEC = 2.5;
+  // Active lyric line: synced → by timestamp with a tiny lookahead so
+  // the line is highlighted right as the singer starts (the lookahead
+  // mostly compensates for the IFrame position-polling lag of ~250ms).
+  // A larger lookahead used to be applied here, but it caused fast
+  // rap tracks to advance lines too early. With a small lookahead the
+  // cadence is correct for both slow songs and rap, and the user can
+  // tap a line to seek forward if it ever lands late.
+  const LOOKAHEAD_SEC = 0.3;
   const activeLineIdx = useMemo(() => {
     if (lyrics.kind === 'synced' && lyrics.lines.length > 0) {
       const target = position + LOOKAHEAD_SEC;

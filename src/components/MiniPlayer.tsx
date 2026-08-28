@@ -29,6 +29,7 @@ export function MiniPlayer(): React.ReactElement | null {
   const router = useRouter();
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
+  const togglePlay = usePlayerStore((s) => s.togglePlay);
 
   const translateY = useSharedValue(100);
   const opacity = useSharedValue(0);
@@ -56,19 +57,31 @@ export function MiniPlayer(): React.ReactElement | null {
     router.push(`/player/${currentTrack.id}`);
   };
 
+  const onTogglePlay = (): void => {
+    if (isNative) {
+      Haptics.selectionAsync().catch(() => undefined);
+    }
+    void togglePlay();
+  };
+
   return (
     <Animated.View
       pointerEvents={currentTrack ? 'auto' : 'none'}
       style={[styles.outer, { bottom: BOTTOM_OFFSET }, style]}
     >
-      <Pressable onPress={openPlayer} accessibilityLabel="Open now playing">
-        <GlassPanel
-          style={styles.panel}
-          padding={spacing.sm}
-          radius={radii.xl}
-        >
-          {currentTrack ? (
-            <View style={styles.row}>
+      <GlassPanel
+        style={styles.panel}
+        padding={spacing.sm}
+        radius={radii.xl}
+      >
+        {currentTrack ? (
+          <View style={styles.row}>
+            <Pressable
+              onPress={openPlayer}
+              accessibilityLabel="Open now playing"
+              hitSlop={4}
+              style={styles.thumbHit}
+            >
               <Image
                 source={{ uri: currentTrack.thumbnail }}
                 style={[
@@ -76,43 +89,57 @@ export function MiniPlayer(): React.ReactElement | null {
                   { backgroundColor: colors.glassSurfaceSubtle },
                 ]}
               />
-              <View style={styles.meta}>
-                <Text
-                  numberOfLines={1}
-                  style={[textStyle('body'), { color: colors.textPrimary }]}
-                >
-                  {currentTrack.title}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={[textStyle('caption'), { color: colors.textSecondary }]}
-                >
-                  {currentTrack.artist}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.statusDot,
-                  {
-                    backgroundColor: isPlaying ? colors.success : colors.textMuted,
-                  },
-                ]}
-              />
-            </View>
-          ) : (
-            <View style={styles.row}>
-              <View
-                style={[styles.thumb, { backgroundColor: colors.glassSurfaceSubtle }]}
-              />
+            </Pressable>
+            <Pressable
+              onPress={openPlayer}
+              accessibilityLabel={`Open ${currentTrack.title} by ${currentTrack.artist}`}
+              style={styles.meta}
+            >
               <Text
-                style={[textStyle('body'), { color: colors.textMuted }]}
+                numberOfLines={1}
+                style={[textStyle('body'), { color: colors.textPrimary }]}
               >
-                No track playing
+                {currentTrack.title}
               </Text>
-            </View>
-          )}
-        </GlassPanel>
-      </Pressable>
+              <Text
+                numberOfLines={1}
+                style={[textStyle('caption'), { color: colors.textSecondary }]}
+              >
+                {currentTrack.artist}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={onTogglePlay}
+              hitSlop={10}
+              accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+              style={({ pressed }) => [
+                styles.playPauseButton,
+                { opacity: pressed ? 0.6 : 1 },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.playPauseGlyph,
+                  { color: colors.textPrimary },
+                ]}
+              >
+                {isPlaying ? '⏸' : '▶'}
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.row}>
+            <View
+              style={[styles.thumb, { backgroundColor: colors.glassSurfaceSubtle }]}
+            />
+            <Text
+              style={[textStyle('body'), { color: colors.textMuted }]}
+            >
+              No track playing
+            </Text>
+          </View>
+        )}
+      </GlassPanel>
     </Animated.View>
   );
 }
@@ -136,12 +163,23 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: radii.sm,
   },
+  thumbHit: {
+    width: 44,
+    height: 44,
+  },
   meta: {
     flex: 1,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  playPauseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  playPauseGlyph: {
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
