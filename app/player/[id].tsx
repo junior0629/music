@@ -606,8 +606,9 @@ const styles = StyleSheet.create({
     width: '40%',
     alignItems: 'center',
   },
-  // Vinyl-record style artwork. The outer ring + spindle give the
-  // "spinning disc" feel from the reference.
+  // Vinyl-record style artwork. The artwork fills the entire circular
+  // disc — no inner padding, no dark ring showing through. The subtle
+  // outer border + the center spindle still give it the "record" feel.
   artDisc: {
     width: 180,
     height: 180,
@@ -618,15 +619,13 @@ const styles = StyleSheet.create({
     width: 180,
     height: 180,
     borderRadius: 90,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    padding: 4,
+    overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.15)',
   },
   artImage: {
     width: '100%',
     height: '100%',
-    borderRadius: 90,
   },
   artSpindle: {
     position: 'absolute',
