@@ -97,32 +97,93 @@ class LyricsService {
     const searchResults = await this.fetchSearch(cleanedTitle, signal);
     if (searchResults.length === 0) return direct;
 
-    // Pick the result whose duration is closest to ours.
+    // Score each result and pick the best. Score combines:
+    //   - title similarity (how much of the cleaned title appears in
+    //     the candidate's trackName)
+    //   - artist-token overlap (does the candidate artist name contain
+    //     any token from the original track's artist? — important
+    //     because re-uploaded YouTube videos have arbitrary channel
+    //     names like "Luxury Music" that have nothing to do with the
+    //     real artist, so we need a separate signal)
+    //   - duration proximity (closer to our track duration wins)
     const target = track.durationSec;
-    const best =
-      target > 0
-        ? searchResults
-            .filter((r) => typeof r.duration === 'number')
-            .sort(
-              (a, b) =>
-                Math.abs((a.duration ?? 0) - target) -
-                Math.abs((b.duration ?? 0) - target),
-            )
-            .find(
-              (r) =>
-                typeof r.duration === 'number' &&
-                Math.abs((r.duration as number) - target) <= DURATION_TOLERANCE_SEC,
-            )
-        : undefined;
+    const titleTokens = cleanedTitle
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 1);
+    const artistTokens = track.artist
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2);
 
-    const picked = best ?? searchResults[0];
-    if (!picked) return direct;
+    let bestScore = -Infinity;
+    let best: LrclibResponse = searchResults[0];
+    for (const r of searchResults) {
+      const cTitle = r.trackName.toLowerCase();
+      const cArtist = r.artistName.toLowerCase();
+      const titleHit = titleTokens.filter((t) => cTitle.includes(t)).length;
+      const titleScore = titleTokens.length === 0 ? 0 : titleHit / titleTokens.length;
+      const artistHit = artistTokens.some((t) => cArtist.includes(t)) ? 1 : 0;
+      const durDelta =
+        target > 0 && typeof r.duration === 'number'
+          ? Math.abs(r.duration - target)
+          : 999;
+      const durPenalty = Math.min(durDelta, 30) / 30; // 0..1
+      const score = titleScore * 2 + artistHit * 1.5 - durPenalty;
+      logger.debug('LyricsService: search candidate', {
+        id: r.id,
+        artist: r.artistName,
+        track: r.trackName,
+        duration: r.duration,
+        titleScore: titleScore.toFixed(2),
+        artistHit,
+        score: score.toFixed(2),
+      });
+      if (score > bestScore) {
+        bestScore = score;
+        best = r;
+      }
+    }
+
+    if (!best) return direct;
+
+    // Only accept the match if the title similarity is reasonable, OR
+    // the candidate has synced lyrics (a strong positive signal that
+    // it's a real, time-aligned entry for this song).
+    const bestTitle = best.trackName.toLowerCase();
+    const bestTitleHit = titleTokens.filter((t) => bestTitle.includes(t)).length;
+    const bestTitleScore = titleTokens.length === 0 ? 0 : bestTitleHit / titleTokens.length;
+    const hasSynced = Boolean(best.syncedLyrics && best.syncedLyrics.trim().length > 0);
+    if (bestTitleScore < 0.4 && !hasSynced) {
+      logger.info('LyricsService: search match too weak, rejecting', {
+        title: track.title,
+        bestTitle: best.trackName,
+        bestArtist: best.artistName,
+        score: bestTitleScore.toFixed(2),
+      });
+      return direct;
+    }
+
+    // If the duration is wildly off, still reject (we don't want to
+    // show lyrics for a 4-minute track on a 6-minute one).
+    if (
+      target > 0 &&
+      typeof best.duration === 'number' &&
+      Math.abs(best.duration - target) > DURATION_TOLERANCE_SEC * 3
+    ) {
+      logger.info('LyricsService: duration mismatch, rejecting', {
+        title: track.title,
+        target,
+        matched: best.duration,
+      });
+      return direct;
+    }
 
     logger.info('LyricsService: matched via search', {
       title: track.title,
-      matched: `${picked.artistName} – ${picked.trackName}`,
+      matched: `${best.artistName} – ${best.trackName} (id=${best.id}, dur=${best.duration}s)`,
     });
-    return parseResponse(picked, track);
+    return parseResponse(best, track);
   }
 
   private getQuery(track: Track): string {
