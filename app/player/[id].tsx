@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,7 +13,7 @@ import Animated, {
   cancelAnimation,
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
-import { useColors, spacing, radii } from '@/theme';
+import { useColors, spacing, radii, fontFamily } from '@/theme';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { lyricsService, LyricsResult } from '@/services/lyrics/lyrics';
@@ -82,6 +82,15 @@ export default function NowPlayingScreen() {
 
   const track = currentTrack;
   const displayDuration = track?.durationSec ?? duration ?? 0;
+
+  // Real width of the seek bar's Pressable. Measured on layout. We use
+  // this instead of `window.innerWidth` for the seek math because the
+  // bar is inset from the screen edge by `paddingHorizontal: spacing.lg`
+  // and a fixed 4px track — using the window width would skew the
+  // ratio heavily. Without measuring, taps near the start of the bar
+  // land at ~0% (correct) but taps past the end get clamped to 100%,
+  // and on web, the previous implementation sometimes wrapped to 0.
+  const seekBarWidthRef = useRef(0);
 
   // Fetch real lyrics whenever the track changes. The previous in-flight
   // request is aborted (via AbortController) when the user skips to
@@ -246,7 +255,12 @@ export default function NowPlayingScreen() {
                   hitSlop={6}
                   style={({ pressed }) => [pressed && styles.lyricPressed]}
                 >
-                  <Text numberOfLines={2} style={styles.lyricActive}>
+                  <Text
+                    style={styles.lyricActive}
+                    // No numberOfLines cap — the active lyric line
+                    // can be long, and we'd rather wrap than truncate
+                    // (the user is reading it).
+                  >
                     {lyrics.lines[activeLineIdx]?.text ?? ' '}
                   </Text>
                 </Pressable>
@@ -271,7 +285,6 @@ export default function NowPlayingScreen() {
 
         {/* Progress + favorite heart (right-aligned, above controls) */}
         <View style={styles.progressRow}>
-          <Text style={styles.timeText}>{formatTime(position)}</Text>
           <View style={{ flex: 1 }} />
           <Pressable
             onPress={() => track && toggleFavorite(track)}
@@ -286,12 +299,27 @@ export default function NowPlayingScreen() {
           </Pressable>
         </View>
         <Pressable
+          onLayout={(e) => {
+            seekBarWidthRef.current = e.nativeEvent.layout.width;
+          }}
           onPress={(e) => {
             if (!track || displayDuration <= 0) return;
             const x = (e.nativeEvent as any)?.locationX ?? 0;
-            const fallbackWidth =
-              typeof window !== 'undefined' ? window.innerWidth - 40 : 300;
-            const ratio = Math.max(0, Math.min(1, x / Math.max(1, fallbackWidth)));
+            // Prefer the measured width; fall back to the event's
+            // own measured width, then to a screen-relative estimate.
+            const measured = seekBarWidthRef.current;
+            const eventWidth = (e.nativeEvent as any)?.target?.offsetWidth as
+              | number
+              | undefined;
+            const width =
+              measured > 0
+                ? measured
+                : typeof eventWidth === 'number' && eventWidth > 0
+                ? eventWidth
+                : typeof window !== 'undefined'
+                ? window.innerWidth - 40
+                : 300;
+            const ratio = Math.max(0, Math.min(1, x / Math.max(1, width)));
             void seek(ratio * displayDuration);
           }}
           hitSlop={6}
@@ -517,27 +545,33 @@ const styles = StyleSheet.create({
   },
   lyricPrev: {
     color: TEXT_MUTED,
-    fontSize: 14,
-    lineHeight: 22,
+    fontSize: 13,
+    lineHeight: 20,
     textAlign: 'center',
-    fontWeight: '500',
+    fontWeight: '400',
     marginBottom: 4,
+    fontFamily: fontFamily.oswald,
+    letterSpacing: 0.3,
   },
   lyricActive: {
     color: TEXT_PRIMARY,
-    fontSize: 22,
-    lineHeight: 30,
+    fontSize: 19,
+    lineHeight: 26,
     textAlign: 'center',
-    fontWeight: '800',
+    fontWeight: '700',
     marginVertical: 6,
+    fontFamily: fontFamily.oswald,
+    letterSpacing: 0.3,
   },
   lyricNext: {
     color: TEXT_MUTED,
-    fontSize: 14,
-    lineHeight: 22,
+    fontSize: 13,
+    lineHeight: 20,
     textAlign: 'center',
-    fontWeight: '500',
+    fontWeight: '400',
     marginTop: 4,
+    fontFamily: fontFamily.oswald,
+    letterSpacing: 0.3,
   },
   lyricEmpty: {
     opacity: 0,
