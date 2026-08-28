@@ -360,9 +360,10 @@ export default function NowPlayingScreen() {
         <View style={styles.middle}>
           <View style={styles.artColumn}>
             <Animated.View style={[styles.artDisc, artSpinStyle]}>
-              {/* Artwork fills the entire circular disc, clipped via
-                  the disc's overflow:hidden + borderRadius. No inner
-                  ring, no border — the photo edge IS the disc edge. */}
+              {/* Image is positioned absolutely to all four edges so
+                  it stretches to fill the disc, bypassing RN Image's
+                  intrinsic sizing (which on web can render smaller
+                  than the parent's width/height 100%). */}
               <Image
                 source={{ uri: artUri }}
                 style={styles.artImage}
@@ -610,29 +611,25 @@ const styles = StyleSheet.create({
     width: '40%',
     alignItems: 'center',
   },
-  // Vinyl-record style artwork. The disc is a single circular box
-  // with overflow:hidden and the image fills it via objectFit:cover.
-  // No inner ring, no border, no background — just the photo clipped
-  // to a circle. The 1px white outline is added via a box-shadow on
-  // the disc itself so it never reduces the inner content area.
+  // Vinyl-record style artwork. The disc is a single 180x180 round
+  // box with overflow:hidden. The image is positioned absolutely to
+  // all four edges so it stretches to fill the disc, bypassing the
+  // RN Image element's intrinsic sizing quirks on web. resizeMode
+  // is set to 'cover' on the Image so the photo scales to fill the
+  // 180x180 frame.
   artDisc: {
     width: 180,
     height: 180,
     borderRadius: 90,
     overflow: 'hidden',
-    // Outline without affecting layout. shadowColor/shadowOffset/
-    // shadowOpacity/shadowRadius render the outline outside the box
-    // on iOS/Android; on web, RN maps shadow* to box-shadow when
-    // elevation is set. We use both for cross-platform reliability.
     backgroundColor: '#000',
-    // Faux outline: a 1px white ring just outside the disc.
-    // On web, box-shadow with spread creates a real outer outline
-    // without affecting layout.
-    // (RN on native ignores box-shadow, so we accept the disc looks
-    // un-outlined on native — the photo edge itself is the visual
-    // boundary.)
   },
   artImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     width: '100%',
     height: '100%',
   },
