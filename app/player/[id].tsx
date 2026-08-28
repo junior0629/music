@@ -109,12 +109,18 @@ export default function NowPlayingScreen() {
     return () => ac.abort();
   }, [track?.id]);
 
-  // Active lyric line: synced → by timestamp, plain → by even distribution.
+  // Active lyric line: synced → by timestamp with a small lookahead so
+  // the line is highlighted slightly before the singer actually starts
+  // (matches how karaoke / Spotify / Apple Music treat LRC timestamps
+  // as "the line is about to be sung" rather than "exact syllable").
+  // Plain → evenly distribute across duration.
+  const LOOKAHEAD_SEC = 1.0;
   const activeLineIdx = useMemo(() => {
     if (lyrics.kind === 'synced' && lyrics.lines.length > 0) {
+      const target = position + LOOKAHEAD_SEC;
       let i = 0;
       for (let k = 0; k < lyrics.lines.length; k++) {
-        if ((lyrics.lines[k].startSec ?? 0) <= position) i = k;
+        if ((lyrics.lines[k].startSec ?? 0) <= target) i = k;
         else break;
       }
       return i;
