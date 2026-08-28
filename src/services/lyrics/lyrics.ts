@@ -3,9 +3,15 @@
  * CORS-open). Returns either time-synced (LRC) lines, plain lines,
  * an "instrumental" marker, or "none" when the track isn't in the DB.
  *
- * LRClib endpoint:
- *   GET https://lrclib.net/api/get
- *     ?artist_name=…&track_name=…&duration=…  (duration in seconds, optional)
+ * Lookup strategy:
+ *   1. GET /api/get?artist_name=…&track_name=…&duration=…
+ *      (best when the original artist is correct)
+ *   2. If 404, fall back to GET /api/search?q=… with the cleaned
+ *      title, and pick the result whose duration is within ±4s of
+ *      our track. This catches the very common case where a YouTube
+ *      result is a cover/lyric-video re-upload (e.g. "Luxury Music"
+ *      re-uploading Adele) — LRClib knows the song, just not the
+ *      uploader's channel.
  *
  * Response (when found):
  *   { id, trackName, artistName, albumName, duration, instrumental,
@@ -21,8 +27,10 @@ import { Track } from '@/types/player';
 import { logger } from '@/utils/logger';
 import { withErrorLogging } from '@/utils/withErrorLogging';
 
-const BASE = 'https://lrclib.net/api/get';
+const GET_URL = 'https://lrclib.net/api/get';
+const SEARCH_URL = 'https://lrclib.net/api/search';
 const TIMEOUT_MS = 10_000;
+const DURATION_TOLERANCE_SEC = 4;
 
 export interface LyricLine {
   text: string;
@@ -64,16 +72,60 @@ class LyricsService {
         return cached;
       }
 
-      const result = await this.fetchFromLrclib(track, signal);
+      const result = await this.fetch(track, signal);
       this.cache.set(key, result);
       return result;
     },
   );
 
-  private async fetchFromLrclib(
-    track: Track,
-    signal?: AbortSignal,
-  ): Promise<LyricsResult> {
+  private async fetch(track: Track, signal?: AbortSignal): Promise<LyricsResult> {
+    // 1. Direct lookup
+    const direct = await this.fetchOne(
+      `${GET_URL}?${this.getQuery(track)}`,
+      track,
+      signal,
+    );
+    if (direct.kind !== 'none') return direct;
+
+    // 2. Search fallback (only if the direct 404'd, not on network error)
+    //    We use the cleaned title as the query — covers the common case
+    //    where the uploader is a lyric channel and LRClib only knows
+    //    the original artist/song.
+    const cleanedTitle = cleanTitle(track.title);
+    if (cleanedTitle.length < 2) return direct;
+
+    const searchResults = await this.fetchSearch(cleanedTitle, signal);
+    if (searchResults.length === 0) return direct;
+
+    // Pick the result whose duration is closest to ours.
+    const target = track.durationSec;
+    const best =
+      target > 0
+        ? searchResults
+            .filter((r) => typeof r.duration === 'number')
+            .sort(
+              (a, b) =>
+                Math.abs((a.duration ?? 0) - target) -
+                Math.abs((b.duration ?? 0) - target),
+            )
+            .find(
+              (r) =>
+                typeof r.duration === 'number' &&
+                Math.abs((r.duration as number) - target) <= DURATION_TOLERANCE_SEC,
+            )
+        : undefined;
+
+    const picked = best ?? searchResults[0];
+    if (!picked) return direct;
+
+    logger.info('LyricsService: matched via search', {
+      title: track.title,
+      matched: `${picked.artistName} – ${picked.trackName}`,
+    });
+    return parseResponse(picked, track);
+  }
+
+  private getQuery(track: Track): string {
     const params = new URLSearchParams({
       artist_name: track.artist,
       track_name: track.title,
@@ -81,11 +133,66 @@ class LyricsService {
     if (track.durationSec > 0) {
       params.set('duration', String(Math.round(track.durationSec)));
     }
-    const url = `${BASE}?${params.toString()}`;
+    return params.toString();
+  }
 
+  private async fetchOne(
+    url: string,
+    track: Track,
+    signal?: AbortSignal,
+  ): Promise<LyricsResult> {
+    const { res, networkError } = await this.httpGet(url, signal);
+    if (networkError) {
+      logger.warn('LyricsService: network error', { err: networkError, title: track.title });
+      return { kind: 'none' };
+    }
+    if (res.status === 404) {
+      logger.info('LyricsService: get 404', { title: track.title, artist: track.artist });
+      return { kind: 'none' };
+    }
+    if (!res.ok) {
+      logger.warn('LyricsService: HTTP error', { status: res.status, title: track.title });
+      return { kind: 'none' };
+    }
+    let data: LrclibResponse;
+    try {
+      data = (await res.json()) as LrclibResponse;
+    } catch (err) {
+      logger.warn('LyricsService: parse error', { err: String(err) });
+      return { kind: 'none' };
+    }
+    return parseResponse(data, track);
+  }
+
+  private async fetchSearch(
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<LrclibResponse[]> {
+    const url = `${SEARCH_URL}?q=${encodeURIComponent(query)}`;
+    const { res, networkError } = await this.httpGet(url, signal);
+    if (networkError) {
+      logger.warn('LyricsService: search network error', { err: networkError, q: query });
+      return [];
+    }
+    if (!res.ok) {
+      logger.warn('LyricsService: search HTTP error', { status: res.status });
+      return [];
+    }
+    try {
+      const list = (await res.json()) as LrclibResponse[];
+      return Array.isArray(list) ? list : [];
+    } catch (err) {
+      logger.warn('LyricsService: search parse error', { err: String(err) });
+      return [];
+    }
+  }
+
+  private async httpGet(
+    url: string,
+    signal?: AbortSignal,
+  ): Promise<{ res: Response; networkError?: undefined } | { res: Response; networkError: string }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    // Chain the caller's signal (so React can cancel on unmount/track change)
     if (signal) {
       if (signal.aborted) controller.abort();
       signal.addEventListener('abort', () => controller.abort());
@@ -95,45 +202,63 @@ class LyricsService {
         signal: controller.signal,
         headers: { Accept: 'application/json' },
       });
-      if (res.status === 404) {
-        logger.info('LyricsService: not found', { title: track.title, artist: track.artist });
-        return { kind: 'none' };
-      }
-      if (!res.ok) {
-        logger.warn('LyricsService: HTTP error', { status: res.status, title: track.title });
-        return { kind: 'none' };
-      }
-      const data = (await res.json()) as LrclibResponse;
-      if (data.instrumental) {
-        logger.info('LyricsService: instrumental', { title: track.title });
-        return { kind: 'instrumental' };
-      }
-      if (data.syncedLyrics && data.syncedLyrics.trim().length > 0) {
-        const lines = parseLrc(data.syncedLyrics);
-        if (lines.length > 0) {
-          logger.info('LyricsService: synced', { title: track.title, count: lines.length });
-          return { kind: 'synced', lines };
-        }
-      }
-      if (data.plainLyrics && data.plainLyrics.trim().length > 0) {
-        const lines = parsePlain(data.plainLyrics);
-        if (lines.length > 0) {
-          logger.info('LyricsService: plain', { title: track.title, count: lines.length });
-          return { kind: 'plain', lines };
-        }
-      }
-      logger.info('LyricsService: empty response', { title: track.title });
-      return { kind: 'none' };
+      return { res };
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') {
-        return { kind: 'none' };
+        // Caller-aborted; we return a 499-ish marker via networkError string.
+        return { res: new Response(null, { status: 0 }), networkError: 'aborted' };
       }
-      logger.warn('LyricsService: fetch failed', { err: String(err), title: track.title });
-      return { kind: 'none' };
+      return { res: new Response(null, { status: 0 }), networkError: String(err) };
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+function parseResponse(data: LrclibResponse, track: Track): LyricsResult {
+  if (data.instrumental) {
+    logger.info('LyricsService: instrumental', { title: track.title });
+    return { kind: 'instrumental' };
+  }
+  if (data.syncedLyrics && data.syncedLyrics.trim().length > 0) {
+    const lines = parseLrc(data.syncedLyrics);
+    if (lines.length > 0) {
+      logger.info('LyricsService: synced', { title: track.title, count: lines.length });
+      return { kind: 'synced', lines };
+    }
+  }
+  if (data.plainLyrics && data.plainLyrics.trim().length > 0) {
+    const lines = parsePlain(data.plainLyrics);
+    if (lines.length > 0) {
+      logger.info('LyricsService: plain', { title: track.title, count: lines.length });
+      return { kind: 'plain', lines };
+    }
+  }
+  logger.info('LyricsService: empty response', { title: track.title });
+  return { kind: 'none' };
+}
+
+/**
+ * Strip common YouTube title noise so a search like
+ * "Adele - Hello (Lyric Video) (Official Audio)" becomes
+ * "Adele - Hello". This dramatically improves the search-fallback hit
+ * rate. We also drop a trailing " - <artist>" if the artist is the
+ * same as the track's `artist` field (avoids doubled-up search terms).
+ */
+function cleanTitle(raw: string): string {
+  let t = raw;
+  // Drop bracketed/parenthesized noise
+  t = t.replace(/\s*[\(\[][^\)\]]*[\)\]]\s*/g, ' ');
+  // Drop common marketing tags (case-insensitive, word-boundary)
+  t = t.replace(
+    /\b(official\s+(music\s+)?(video|audio|lyric(\s*video)?|visualizer)?|lyric\s+video|lyrics\s+video|official\s+hd|hd\s+video|full\s+album|m\/v|mv|hq|4k|remastered(\s+\d{4})?)\b/gi,
+    ' ',
+  );
+  // Collapse dashes that became "  -  " after tag removal
+  t = t.replace(/\s*-\s*/g, ' ');
+  // Collapse whitespace
+  t = t.replace(/\s+/g, ' ').trim();
+  return t;
 }
 
 /**
