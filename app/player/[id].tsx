@@ -6,7 +6,6 @@ import Animated, {
   Easing,
   FadeIn,
   FadeInDown,
-  LinearTransition,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -36,37 +35,96 @@ const TEXT_PRIMARY = '#FFFFFF';
 const TEXT_SECONDARY = 'rgba(255,255,255,0.78)';
 const TEXT_MUTED = 'rgba(255,255,255,0.55)';
 
-/** One lyric line in the 3-row stack. Tappable to seek. */
-function LyricRow({
+/**
+ * Vertical stride for the karaoke slide. Each lyric line sits in a
+ * slot of this height; translateY = (lineIndex - activeLineIdx) *
+ * LYRIC_ROW_HEIGHT. Active line lives in slot 0 (visually centered).
+ * Past lines occupy negative slots (above), future lines positive
+ * slots (below).
+ */
+const LYRIC_ROW_HEIGHT = 56;
+
+/**
+ * Number of slots visible above and below the active line. We render
+ * 3 above + active + 3 below = 7 lines, so lines slide into view from
+ * off-screen rows as the song progresses.
+ */
+const LYRIC_WINDOW = 3;
+
+/**
+ * A single lyric line. Its vertical position is driven by a single
+ * shared `window` value (the animated active index), so when the
+ * active line changes every row springs in lockstep — past lines
+ * slide up and out, future lines slide up into view.
+ *
+ * `isActive` controls the text size/weight in React render (RN Text
+ * styles can't be animated reliably on web). The translateY/opacity
+ * animate smoothly via the shared value.
+ */
+function LyricLine({
   line,
-  variant,
+  lineIndex,
+  window,
+  isActive,
   onPress,
 }: {
   line: { text: string; startSec?: number } | undefined;
-  variant: 'past' | 'active' | 'future';
+  lineIndex: number;
+  window: Animated.SharedValue<number>;
+  isActive: boolean;
+  onPress: (startSec: number | undefined) => void;
+}): React.ReactElement {
+  const animatedStyle = useAnimatedStyle(() => {
+    const slot = lineIndex - Math.round(window.value);
+    const translateY = slot * LYRIC_ROW_HEIGHT;
+    const dist = Math.abs(slot);
+    // Opacity fades with distance from active slot. Off-window rows
+    // (|slot| > LYRIC_WINDOW) are hidden completely.
+    let opacity: number;
+    if (dist > LYRIC_WINDOW) opacity = 0;
+    else if (dist === 0) opacity = 1;
+    else if (dist === 1) opacity = 0.85;
+    else if (dist === 2) opacity = 0.5;
+    else opacity = 0.25;
+    return { transform: [{ translateY }], opacity };
+  });
+
+  return (
+    <Animated.View style={[styles.lyricRowSlot, animatedStyle]}>
+      <LyricRow line={line} isActive={isActive} onPress={onPress} />
+    </Animated.View>
+  );
+}
+
+/** Pure presentational row: text + tap-to-seek. Tappable rows are
+ *  the synced ones (those with a startSec); plain-lyrics rows are
+ *  decorative. */
+function LyricRow({
+  line,
+  isActive,
+  onPress,
+}: {
+  line: { text: string; startSec?: number } | undefined;
+  isActive: boolean;
   onPress: (startSec: number | undefined) => void;
 }): React.ReactElement {
   const text = line?.text ?? ' ';
-  const style =
-    variant === 'active' ? styles.lyricTextActive
-    : variant === 'past' ? styles.lyricTextPast
-    : styles.lyricTextFuture;
-  const label =
-    variant === 'active' ? 'Current lyric' :
-    variant === 'past' ? 'Previous lyric' : 'Next lyric';
   return (
     <Pressable
       onPress={() => onPress(line?.startSec)}
       disabled={!line?.startSec}
-      accessibilityLabel={label}
+      accessibilityLabel={line?.text ? `Seek to "${line.text}"` : 'Lyric line'}
       style={({ pressed }) => [
         styles.lyricRow,
         pressed && styles.lyricPressed,
       ]}
     >
       <Text
-        numberOfLines={variant === 'active' ? 3 : 2}
-        style={[styles.lyricText, style]}
+        numberOfLines={2}
+        style={[
+          styles.lyricText,
+          isActive ? styles.lyricTextActive : styles.lyricTextPast,
+        ]}
       >
         {text}
       </Text>
@@ -202,6 +260,24 @@ export default function NowPlayingScreen() {
     return { activeLineIdx: 0, preVocal: false };
   }, [lyrics, position, displayDuration]);
 
+  // Lyric slide animation. A single shared value tracks the active
+  // line index as a float. When activeLineIdx changes, we spring
+  // the value to the new index; every LyricLine's translateY is
+  // driven by `(lineIndex - round(window.value)) * ROW_HEIGHT`, so
+  // the whole stack glides in lockstep — past lines slide up out,
+  // the new active slides into the center, future lines appear
+  // from below. This is the karaoke-style vertical scroll.
+  const lyricWindow = useSharedValue(0);
+  useEffect(() => {
+    // Clamp pre-vocal (-1) and out-of-range indices to 0 so we don't
+    // animate the whole stack off-screen before the singer starts.
+    const target = activeLineIdx < 0 ? 0 : activeLineIdx;
+    lyricWindow.value = withTiming(target, {
+      duration: 420,
+      easing: Easing.bezierFn(0.22, 1, 0.36, 1), // easeOutQuart
+    });
+  }, [activeLineIdx, lyricWindow]);
+
   // Tap a lyric line → seek to that line's timestamp. Only meaningful
   // for synced LRC lines (those have a startSec). For plain lyrics
   // there are no timestamps to seek to, so the press is a no-op.
@@ -306,30 +382,37 @@ export default function NowPlayingScreen() {
             ) : lyrics.kind === 'none' ? (
               <Text style={[styles.lyricText, styles.lyricTextFuture]}>Lyrics not available</Text>
             ) : (
-              // 3-row lyric view: prev / active / next. The column
-              // uses LinearTransition so when activeLineIdx changes
-              // and the rows' content changes, reanimated animates
-              // the layout shift (slide up) automatically.
-              <Animated.View
-                layout={LinearTransition.duration(320)}
-                style={styles.lyricColumnInner}
-              >
-                <LyricRow
-                  line={lyrics.lines[activeLineIdx - 1]}
-                  variant="past"
-                  onPress={seekToLine}
-                />
-                <LyricRow
-                  line={lyrics.lines[activeLineIdx]}
-                  variant="active"
-                  onPress={seekToLine}
-                />
-                <LyricRow
-                  line={lyrics.lines[activeLineIdx + 1]}
-                  variant="future"
-                  onPress={seekToLine}
-                />
-              </Animated.View>
+              // Karaoke-style sliding lyric view. We render a 7-line
+              // window (3 above + active + 3 below) and animate a
+              // single `lyricWindow` shared value as the active
+              // index changes. Each line's translateY is driven by
+              // `(lineIndex - round(lyricWindow)) * ROW_HEIGHT`, so
+              // the whole stack glides in lockstep on every change.
+              <View style={styles.lyricCarousel}>
+                {(() => {
+                  const total = lyrics.lines.length;
+                  // Renderable index range (clamped to bounds). Even
+                  // for out-of-range indices we still render the row
+                  // at the same lineIndex so its translateY remains
+                  // correct, and the LyricLine's animated opacity
+                  // hides it once it's off-window.
+                  const center = activeLineIdx < 0 ? 0 : activeLineIdx;
+                  const indices: number[] = [];
+                  for (let k = center - LYRIC_WINDOW; k <= center + LYRIC_WINDOW; k++) {
+                    indices.push(k);
+                  }
+                  return indices.map((i) => (
+                    <LyricLine
+                      key={i}
+                      line={i >= 0 && i < total ? lyrics.lines[i] : undefined}
+                      lineIndex={i}
+                      window={lyricWindow}
+                      isActive={i === activeLineIdx}
+                      onPress={seekToLine}
+                    />
+                  ));
+                })()}
+              </View>
             )}
           </View>
         </View>
@@ -566,24 +649,38 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Lyrics column on the right. Three rows stacked vertically:
-  // prev / active / next. The active line is the middle row. The
-  // parent column uses LinearTransition so when activeLineIdx
-  // changes, the rows' text changes and reanimated animates the
-  // height shift (slide up) automatically.
+  // Lyrics column on the right. The `lyricsColumn` is the
+  // outer container (right half of the middle row). The
+  // `lyricCarousel` is a fixed-height viewport that holds the
+  // sliding stack of lines; each `lyricRowSlot` is one slot
+  // (LYRIC_ROW_HEIGHT tall) and gets its own translateY driven
+  // by the active-line shared value, so the whole stack glides
+  // smoothly when the active line advances.
   lyricsColumn: {
     flex: 1,
     paddingLeft: spacing.lg,
     justifyContent: 'center',
   },
-  lyricColumnInner: {
-    width: '100%',
+  lyricCarousel: {
+    height: LYRIC_ROW_HEIGHT * (LYRIC_WINDOW * 2 + 1),
+    justifyContent: 'center',
+    alignItems: 'stretch',
+    overflow: 'hidden',
   },
-  lyricRow: {
-    minHeight: 56,
+  lyricRowSlot: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: spacing.xs,
+  },
+  lyricRow: {
+    width: '100%',
+    minHeight: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: spacing.sm,
   },
   lyricText: {
