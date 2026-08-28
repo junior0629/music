@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +16,7 @@ import { BlurView } from 'expo-blur';
 import { useColors, spacing, radii } from '@/theme';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
+import { lyricsService, LyricsResult } from '@/services/lyrics/lyrics';
 import { logger } from '@/utils/logger';
 
 const PLACEHOLDER_THUMB =
@@ -23,27 +24,6 @@ const PLACEHOLDER_THUMB =
   encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="%237C3AED"/><stop offset="0.5" stop-color="%23EC4899"/><stop offset="1" stop-color="%233B82F6"/></linearGradient></defs><rect width="400" height="400" fill="url(%23g)"/></svg>',
   );
-
-/**
- * Placeholder lyric lines shown when no real-time lyric source
- * is wired up. Real lyrics are Phase 5 (see PHASES.md) — for now
- * this gives the layout the same visual rhythm as the reference.
- * Cycles through the lines so the screen has motion.
- */
-const SAMPLE_LYRICS: ReadonlyArray<{ line: string; emphasis: 'high' | 'normal' | 'low' }> = [
-  { line: 'deep breaths, honey', emphasis: 'low' },
-  { line: "we’re at least til morning", emphasis: 'high' },
-  { line: "then there’s nowhere,", emphasis: 'normal' },
-  { line: 'nowhere we have to be', emphasis: 'normal' },
-  { line: 'so stay with me a while', emphasis: 'low' },
-  { line: 'just see how the light falls', emphasis: 'high' },
-  { line: 'on everything you wear', emphasis: 'normal' },
-  { line: 'and every word you say', emphasis: 'low' },
-  { line: "we don't need the city", emphasis: 'normal' },
-  { line: "we don’t need the noise", emphasis: 'low' },
-  { line: 'just your voice', emphasis: 'high' },
-  { line: 'and this quiet', emphasis: 'low' },
-];
 
 const TEXT_PRIMARY = '#FFFFFF';
 const TEXT_SECONDARY = 'rgba(255,255,255,0.78)';
@@ -73,6 +53,9 @@ export default function NowPlayingScreen() {
   const isFavorite = useLibraryStore((s) => s.isFavorite);
   const toggleFavorite = useLibraryStore((s) => s.toggleFavorite);
 
+  const [lyrics, setLyrics] = useState<LyricsResult>({ kind: 'none' });
+  const [lyricsLoading, setLyricsLoading] = useState(false);
+
   useEffect(() => {
     logger.setContext('NowPlayingScreen');
     logger.info('Opened', { trackId: id, hasTrack: Boolean(currentTrack) });
@@ -97,18 +80,53 @@ export default function NowPlayingScreen() {
     transform: [{ rotate: `${spin.value}deg` }],
   }));
 
-  // Highlighted lyric index is the function of elapsed position
-  // modulo the lyric count. With 12 lines and a 3:11 track that's
-  // ~16s per line, which roughly matches real lyric cadence.
   const track = currentTrack;
   const displayDuration = track?.durationSec ?? duration ?? 0;
-  const lineDurationSec = displayDuration > 0
-    ? displayDuration / SAMPLE_LYRICS.length
-    : 8;
-  const activeLineIdx = Math.min(
-    SAMPLE_LYRICS.length - 1,
-    Math.floor(position / lineDurationSec),
-  );
+
+  // Fetch real lyrics whenever the track changes. The previous in-flight
+  // request is aborted (via AbortController) when the user skips to
+  // another track, so we don't show stale text from the old song.
+  useEffect(() => {
+    if (!track) {
+      setLyrics({ kind: 'none' });
+      setLyricsLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    setLyricsLoading(true);
+    setLyrics({ kind: 'none' });
+    lyricsService
+      .getLyrics(track, ac.signal)
+      .then((r) => {
+        if (!ac.signal.aborted) setLyrics(r);
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setLyrics({ kind: 'none' });
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLyricsLoading(false);
+      });
+    return () => ac.abort();
+  }, [track?.id]);
+
+  // Active lyric line: synced → by timestamp, plain → by even distribution.
+  const activeLineIdx = useMemo(() => {
+    if (lyrics.kind === 'synced' && lyrics.lines.length > 0) {
+      let i = 0;
+      for (let k = 0; k < lyrics.lines.length; k++) {
+        if ((lyrics.lines[k].startSec ?? 0) <= position) i = k;
+        else break;
+      }
+      return i;
+    }
+    if (lyrics.kind === 'plain' && lyrics.lines.length > 0 && displayDuration > 0) {
+      return Math.min(
+        lyrics.lines.length - 1,
+        Math.floor(position / (displayDuration / lyrics.lines.length)),
+      );
+    }
+    return 0;
+  }, [lyrics, position, displayDuration]);
 
   const favorited = track ? isFavorite(track.id) : false;
   const artUri = track?.thumbnail ?? PLACEHOLDER_THUMB;
@@ -177,22 +195,35 @@ export default function NowPlayingScreen() {
           </View>
 
           <View style={styles.lyricsColumn}>
-            {SAMPLE_LYRICS.map((l, idx) => {
-              const isActive = idx === activeLineIdx;
-              return (
+            {lyrics.kind === 'instrumental' ? (
+              <Text style={styles.lyricActive}>♪ Instrumental</Text>
+            ) : lyrics.kind === 'none' && lyricsLoading ? (
+              <Text style={styles.lyricPrev}>…</Text>
+            ) : lyrics.kind === 'none' ? (
+              <Text style={styles.lyricPrev}>Lyrics not available</Text>
+            ) : (
+              <Animated.View
+                key={activeLineIdx}
+                entering={FadeIn.duration(220)}
+                style={styles.lyricStack}
+              >
                 <Text
-                  key={idx}
-                  numberOfLines={1}
-                  style={[
-                    styles.lyricLine,
-                    isActive ? styles.lyricActive : null,
-                    !isActive && idx < activeLineIdx ? styles.lyricPast : null,
-                  ]}
+                  numberOfLines={2}
+                  style={[styles.lyricPrev, !lyrics.lines[activeLineIdx - 1] && styles.lyricEmpty]}
                 >
-                  {l.line}
+                  {lyrics.lines[activeLineIdx - 1]?.text ?? ' '}
                 </Text>
-              );
-            })}
+                <Text numberOfLines={2} style={styles.lyricActive}>
+                  {lyrics.lines[activeLineIdx]?.text ?? ' '}
+                </Text>
+                <Text
+                  numberOfLines={2}
+                  style={[styles.lyricNext, !lyrics.lines[activeLineIdx + 1] && styles.lyricEmpty]}
+                >
+                  {lyrics.lines[activeLineIdx + 1]?.text ?? ' '}
+                </Text>
+              </Animated.View>
+            )}
           </View>
         </View>
 
@@ -409,26 +440,42 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Lyrics column on the right
+  // Lyrics column on the right — one line at a time, centered
   lyricsColumn: {
     flex: 1,
     paddingLeft: spacing.lg,
     justifyContent: 'center',
+    alignItems: 'stretch',
   },
-  lyricLine: {
+  lyricStack: {
+    alignItems: 'center',
+  },
+  lyricPrev: {
     color: TEXT_MUTED,
-    fontSize: 16,
-    lineHeight: 26,
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: 'center',
     fontWeight: '500',
+    marginBottom: 4,
   },
   lyricActive: {
     color: TEXT_PRIMARY,
-    fontSize: 19,
-    fontWeight: '800',
+    fontSize: 22,
     lineHeight: 30,
+    textAlign: 'center',
+    fontWeight: '800',
+    marginVertical: 6,
   },
-  lyricPast: {
-    color: TEXT_SECONDARY,
+  lyricNext: {
+    color: TEXT_MUTED,
+    fontSize: 14,
+    lineHeight: 22,
+    textAlign: 'center',
+    fontWeight: '500',
+    marginTop: 4,
+  },
+  lyricEmpty: {
+    opacity: 0,
   },
 
   // Progress bar
