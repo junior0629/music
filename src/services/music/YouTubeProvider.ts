@@ -34,8 +34,76 @@ const MAX_RESULTS = 25;
 const BASE = 'https://www.googleapis.com/youtube/v3';
 const MUSIC_CATEGORY_ID = '10'; // YouTube category for Music
 
+// Cache config. The YouTube Data API v3 free tier is 10,000 units/day
+// for search; this cache keeps repeated queries (and the same song
+// being looked up multiple times across the session) from burning
+// the daily quota. Cache lives in-memory for the session — no
+// AsyncStorage churn, and it resets when the app cold-starts.
+const SEARCH_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const SEARCH_CACHE_MAX_ENTRIES = 50;
+const TRACK_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const TRACK_CACHE_MAX_ENTRIES = 200;
+
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+/**
+ * Tiny TTL cache. On `get`, drops expired entries lazily. On `set`,
+ * if we'd exceed MAX_ENTRIES, drops the oldest entry. Map iteration
+ * order in JS is insertion order, so "oldest" is the first key.
+ */
+class TtlCache<V> {
+  private map = new Map<string, CacheEntry<V>>();
+  constructor(
+    private readonly ttlMs: number,
+    private readonly maxEntries: number,
+  ) {}
+
+  get(key: string): V | undefined {
+    const entry = this.map.get(key);
+    if (!entry) return undefined;
+    if (entry.expiresAt < Date.now()) {
+      this.map.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  has(key: string): boolean {
+    return this.get(key) !== undefined;
+  }
+
+  set(key: string, value: V): void {
+    if (this.map.has(key)) {
+      // Refresh insertion order by re-inserting.
+      this.map.delete(key);
+    } else if (this.map.size >= this.maxEntries) {
+      // Drop the oldest entry (first key in insertion order).
+      const oldest = this.map.keys().next().value;
+      if (oldest !== undefined) this.map.delete(oldest);
+    }
+    this.map.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+}
+
 export class YouTubeProvider implements MusicProvider {
   readonly name = 'YouTube (official)';
+
+  // Session-scoped caches. See note above on the quota rationale.
+  private searchCache = new TtlCache<SearchResults>(
+    SEARCH_CACHE_TTL_MS,
+    SEARCH_CACHE_MAX_ENTRIES,
+  );
+  private trackCache = new TtlCache<Track>(
+    TRACK_CACHE_TTL_MS,
+    TRACK_CACHE_MAX_ENTRIES,
+  );
 
   async search(query: string, opts?: { signal?: AbortSignal }): Promise<SearchResults> {
     if (!hasYouTubeKey()) {
@@ -47,6 +115,18 @@ export class YouTubeProvider implements MusicProvider {
     const q = (query ?? '').trim();
     if (!q) {
       return { tracks: [], albums: [], artists: [], source: SOURCE_NAME };
+    }
+
+    // Cache lookup. We key on a normalized form of the query so
+    // "Adele  " and "adele" hit the same cache entry.
+    const cacheKey = q.toLowerCase();
+    const cached = this.searchCache.get(cacheKey);
+    if (cached) {
+      logger.info('YouTubeProvider.search cache hit', {
+        q,
+        tracks: cached.tracks.length,
+      });
+      return cached;
     }
 
     const url =
@@ -83,19 +163,40 @@ export class YouTubeProvider implements MusicProvider {
       });
     }
 
-    return {
-      tracks: playableItems.map((i) =>
-        searchItemToTrack(i, meta.get(i.id.videoId)?.durationSec ?? 0),
-      ),
+    const tracks = playableItems.map((i) =>
+      searchItemToTrack(i, meta.get(i.id.videoId)?.durationSec ?? 0),
+    );
+
+    // Populate the per-track cache too, so a later getTrack(id) for
+    // any of these results is a no-op.
+    for (const t of tracks) {
+      this.trackCache.set(t.id, t);
+    }
+
+    const results: SearchResults = {
+      tracks,
       albums: [],
       artists: [],
       source: SOURCE_NAME,
     };
+
+    this.searchCache.set(cacheKey, results);
+    logger.info('YouTubeProvider.search fetched', {
+      q,
+      tracks: tracks.length,
+      cacheSize: this.searchCache.size,
+    });
+    return results;
   }
 
   async getTrack(id: string): Promise<Track> {
     if (!hasYouTubeKey()) {
       throw new Error('YouTube API key missing. See .env.example for setup.');
+    }
+    const cached = this.trackCache.get(id);
+    if (cached) {
+      logger.info('YouTubeProvider.getTrack cache hit', { id });
+      return cached;
     }
     const url =
       `${BASE}/videos?key=${encodeURIComponent(config.youtubeApiKey)}` +
@@ -106,7 +207,7 @@ export class YouTubeProvider implements MusicProvider {
     if (v.status?.embeddable === false) {
       throw new Error(`Video not embeddable: ${v.snippet.title}`);
     }
-    return {
+    const track: Track = {
       id: v.id,
       title: v.snippet.title,
       artist: v.snippet.channelTitle,
@@ -114,6 +215,8 @@ export class YouTubeProvider implements MusicProvider {
       thumbnail: pickBestThumbnail(v.snippet.thumbnails),
       sourceProvider: SOURCE_NAME,
     };
+    this.trackCache.set(id, track);
+    return track;
   }
 
   async getAlbum(_id: string): Promise<Album> {
