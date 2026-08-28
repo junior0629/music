@@ -4,48 +4,41 @@
 
 **Project:** Personal music app for two people
 **Repo:** https://github.com/junior0629/music.git
-**Last updated:** 2026-08-28 (Phase 2 in progress)
+**Last updated:** 2026-08-28 (Phase 2 wrapping, Phase 3 unblocked)
 
 ---
 
 ## Current status
 
-🟡 **Phase 2 — Real search + real playback via YouTube (in progress, audio working)**
-- ✅ YouTube Data API v3 key obtained + stored in `.env.local` (gitignored), `src/config/keys.ts` reads via `EXPO_PUBLIC_YOUTUBE_API_KEY`
-- ✅ `YouTubeProvider` implemented: search via `/search?type=video&videoCategoryId=10`, batched metadata fetch via `/videos?part=contentDetails,status`
-- ✅ `YouTubeProvider` filters out videos with `status.embeddable === false` — owner-restricted videos never appear in results (otherwise the IFrame silently fails to play)
-- ✅ `YouTubeIFrameAudioService` (web) wraps the YouTube IFrame Player API; falls back to `expo-audio` on native
-- ✅ Same `AudioService` interface — no changes needed in `playerStore`
-- ✅ `playerStore` wired: loadTrack → getStreamUrl → audio.load → play; next/prev/seek/position events flow
-- ✅ Position polling via 250ms `getCurrentTime()` ticks; onStateChange wires buffering + ended events
-- ✅ IFrame player container is 480×270 with `transform: translateY(120%)` so Chrome sees it as "visible" (else autoplay is blocked) but the user can't see it
-- ✅ Buffering watchdog: if the player sits in BUFFERING for 8s+, fire a clear "stuck buffering (region/age/embed block?)" error
-- ✅ Auto-continue: after the first user-initiated play, subsequent tracks (next/prev) auto-play because the iframe is now "trusted" by the browser
-- ✅ Destroy-guard prevents stale state events from a torn-down player firing on the new one
-- ✅ `PIPED_INSTANCES` constant + `PipedProvider`/`pipedTypes` files deleted; provider factory points to `YouTubeProvider`
-- ✅ `.env.example` template added for future setup
-- ✅ Typecheck clean, bundle compiles (6.27 MB, HTTP 200)
-- ✅ **Verified end-to-end in Edge browser**: search → tap result → tap play → audio plays
-- ⚠️ Chrome: works only with no YouTube-blocking extensions (ad-blockers can block the iframe). Edge is the recommended test browser until Phase 4 native build
-- ⏳ Phase 3: SQLite for playlists, favorites, history (depends on Phase 2 verification)
+✅ **Phase 2 — Real search + real playback via YouTube (complete)**
+- ✅ YouTube Data API v3 key obtained + stored in `.env.local` (gitignored)
+- ✅ `YouTubeProvider`: search via `/search?type=video&videoCategoryId=10`, batched metadata fetch via `/videos?part=contentDetails,status`
+- ✅ Filters out `status.embeddable === false` videos (owner-restricted)
+- ✅ `YouTubeIFrameAudioService` (web) + `expo-audio` fallback (native)
+- ✅ IFrame container is 480×270 with `transform: translateY(120%)` to satisfy Chrome's autoplay visibility check
+- ✅ Buffering watchdog (8s) surfaces "stuck buffering" error
+- ✅ Auto-continue after first user gesture; destroy-guard for torn-down players
+- ✅ **Lyrics integration** via LRClib: `/api/get` direct lookup, `/api/search` fallback for re-uploaded tracks, scored match (title similarity + artist token hit + duration penalty)
+- ✅ **Smooth-scroll lyric view** (reanimated withTiming, Apple Music-style vertical slide)
+- ✅ **Tap-to-seek on lyric lines** + **drag-to-seek on progress bar** (GestureDetector / Pan worklet)
+- ✅ **Pre-vocal period** (no highlighted line before the first LRC timestamp) — fixes "lyrics show before singer starts"
+- ✅ **Mini-player play/pause button** + isPlaying state desync fix (IFrame now reports PLAYING/PAUSED back to the store via `onPlayingChange`)
+- ✅ NowPlaying screen: spinning circular art on the left, lyrics on the right, blurred album-art background, white transport controls, heart icon above seek bar
+- ✅ Typecheck clean
+- ⚠️ Chrome: works only with no YouTube-blocking extensions. Edge recommended.
+- 🟡 Phase 3 next: SQLite for playlists, favorites, history
 
 ✅ **Phase 1 — App shell + glass UI primitives (complete)**
-- ✅ Scaffold: Expo 51 + TypeScript + Expo Router 3, full folder structure
-- ✅ Design tokens: colors (dark/light), radii, spacing, typography, shadows, platform helpers
-- ✅ Logger module with 4 levels, context, ring buffer, subscribers, measure() helper
+- ✅ Expo 51 + TypeScript + Expo Router 3, full folder structure
+- ✅ Design tokens: colors (dark/light), radii, spacing, typography (Oswald), shadows
+- ✅ Logger (4 levels, context, ring buffer, subscribers, measure())
 - ✅ Global ErrorBoundary with glass-styled fallback
-- ✅ DevLogPanel — inline in Settings, filterable, copyable, shows error count badge
-- ✅ Service abstractions: storage (AsyncStorage), player (no-op for Phase 1), music (MockProvider)
+- ✅ DevLogPanel — inline in Settings, filterable, copyable
+- ✅ Service abstractions: storage, player, music
 - ✅ Three Zustand stores: theme (persisted), player, library
 - ✅ Glass UI primitives: GlassCard, GlassPanel, GradientBackground, FloatingNav, MiniPlayer
 - ✅ 4 tab screens with mock data: Home, Search, Library, Settings
-- ✅ Now Playing route (placeholder, fully styled)
 - ✅ Animations: reanimated FadeInDown/Layout, mini-player slide-up
-- ✅ Accessibility: accessibilityLabel on every Pressable, 44pt+ touch targets
-- ✅ TypeScript typecheck: clean
-- ✅ Web build: 952 modules, 1.63 MB prod bundle, dev server returns HTTP 200 in 11ms
-
-**Last verification:** 2026-08-27 — `npx expo start --web` runs cleanly, no console errors, all 4 tabs navigable, theme toggle works, mini-player placeholder visible, DevLogPanel opens with live log stream.
 
 ---
 
@@ -54,9 +47,9 @@
 | # | Phase | Status | Started | Completed | Notes |
 |---|---|---|---|---|---|
 | 0 | Planning & setup | ✅ Complete | 2026-08-27 | 2026-08-27 | Stack, design, structure decided |
-| 1 | App shell + glass UI primitives | ✅ Complete | 2026-08-27 | 2026-08-27 | Verified: web build OK, dev server returns 200, typecheck clean |
-| 2 | **Real search + real playback (PRIORITY)** | 🟡 In progress | 2026-08-27 | — | YouTube Data API v3 + IFrame Player (Piped dropped — stream extraction blocked per-video by YouTube). Typecheck clean, bundle compiles, awaiting end-to-end browser test. |
-| 3 | SQLite: playlists, favorites, history | 🔒 Locked | — | — | Depends on Phase 2 |
+| 1 | App shell + glass UI primitives | ✅ Complete | 2026-08-27 | 2026-08-27 | Web build OK, typecheck clean |
+| 2 | **Real search + real playback** | ✅ Complete | 2026-08-27 | 2026-08-28 | YouTube Data API v3 + IFrame Player. Lyrics via LRClib. Edge verified. |
+| 3 | SQLite: playlists, favorites, history | 🟡 Ready to start | — | — | Next up. Depends on Phase 2. |
 | 4 | Downloads + local music import | 🔒 Locked | — | — | May require EAS dev build |
 | 5 | Partner features, stats, extras | 🔒 Locked | — | — | Final polish |
 
@@ -196,11 +189,31 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - [x] Update `GradientBackground` colors based on current track's palette
 - [x] Smooth color transition (no transition needed; just-in-time swap)
 
+### 2.6 Now Playing screen
+- [x] Blurred album-art background (web uses CSS blur; native uses BlurView)
+- [x] Spinning circular artwork on the left (only animates while playing)
+- [x] Lyrics column on the right with smooth vertical scroll (reanimated withTiming)
+- [x] Tap-to-seek on lyric lines (synced LRC only)
+- [x] Drag-to-seek on progress bar (GestureDetector / Pan worklet)
+- [x] White text + heart icon above seek bar + large white play button
+- [x] Mini-player play/pause button (so pause is reachable without opening the full player)
+- [x] `isPlaying` state stays in sync with the IFrame via `onPlayingChange` (auto-play tracks now show ⏸, not ▶)
+
+### 2.7 Real-time lyrics (LRClib)
+- [x] `src/services/lyrics/lyrics.ts` — fetch from `https://lrclib.net/api/get`, fall back to `/api/search` for re-uploaded tracks
+- [x] Score each search candidate by title similarity + artist-token overlap + duration proximity; reject bad matches
+- [x] LRC parser: handles `[mm:ss.xx]`, `[mm:ss]`, single-digit minutes, multi-timestamp lines, skips header tags
+- [x] Pre-vocal period: no line highlighted before the first LRC timestamp (fixes "lyrics show before singer starts")
+- [x] Cached per-track for the session (no re-fetch on re-entering NowPlaying)
+- [x] 10s timeout, AbortController for track changes
+- [x] Lyrics font matches app (Oswald)
+
 **Definition of done for Phase 2:**
 - [x] Search "Taylor Swift" returns real results with real thumbnails — verified in Edge
 - [x] Tap a result → it actually plays — verified in Edge
-- [x] Mini-player shows the playing track — verified
-- [x] Pause/play, next, previous, seek all work — verified
+- [x] Mini-player shows the playing track + has play/pause — verified
+- [x] Pause/play, next, previous, seek (tap and drag) all work — verified
+- [x] Real-time synced lyrics (LRClib) display one line at a time with smooth scroll — verified
 - [x] App survives a real song start-to-finish without crashing — verified
 - ⚠️ Chrome: blocked by YouTube-blocking extensions (ad-blockers). Edge works. Phase 4 native build avoids this entirely.
 
