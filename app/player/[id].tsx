@@ -114,7 +114,11 @@ export default function NowPlayingScreen() {
   // (matches how karaoke / Spotify / Apple Music treat LRC timestamps
   // as "the line is about to be sung" rather than "exact syllable").
   // Plain → evenly distribute across duration.
-  const LOOKAHEAD_SEC = 1.0;
+  // The lookahead is larger for synced lyrics (2.5s) because LRC
+  // timestamps are almost always a bit late vs. the actual vocal.
+  // The user can also tap a line to seek there, which both jumps
+  // playback and lets them nudge the offset.
+  const LOOKAHEAD_SEC = 2.5;
   const activeLineIdx = useMemo(() => {
     if (lyrics.kind === 'synced' && lyrics.lines.length > 0) {
       const target = position + LOOKAHEAD_SEC;
@@ -133,6 +137,14 @@ export default function NowPlayingScreen() {
     }
     return 0;
   }, [lyrics, position, displayDuration]);
+
+  // Tap a lyric line → seek to that line's timestamp. Only meaningful
+  // for synced LRC lines (those have a startSec). For plain lyrics
+  // there are no timestamps to seek to, so the press is a no-op.
+  const seekToLine = (startSec: number | undefined) => {
+    if (typeof startSec !== 'number') return;
+    void seek(startSec);
+  };
 
   const favorited = track ? isFavorite(track.id) : false;
   const artUri = track?.thumbnail ?? PLACEHOLDER_THUMB;
@@ -213,21 +225,45 @@ export default function NowPlayingScreen() {
                 entering={FadeIn.duration(220)}
                 style={styles.lyricStack}
               >
-                <Text
-                  numberOfLines={2}
-                  style={[styles.lyricPrev, !lyrics.lines[activeLineIdx - 1] && styles.lyricEmpty]}
+                <Pressable
+                  onPress={() => seekToLine(lyrics.lines[activeLineIdx - 1]?.startSec)}
+                  disabled={!lyrics.lines[activeLineIdx - 1]?.startSec}
+                  accessibilityLabel="Previous lyric"
+                  hitSlop={6}
+                  style={({ pressed }) => [pressed && styles.lyricPressed]}
                 >
-                  {lyrics.lines[activeLineIdx - 1]?.text ?? ' '}
-                </Text>
-                <Text numberOfLines={2} style={styles.lyricActive}>
-                  {lyrics.lines[activeLineIdx]?.text ?? ' '}
-                </Text>
-                <Text
-                  numberOfLines={2}
-                  style={[styles.lyricNext, !lyrics.lines[activeLineIdx + 1] && styles.lyricEmpty]}
+                  <Text
+                    numberOfLines={2}
+                    style={[styles.lyricPrev, !lyrics.lines[activeLineIdx - 1] && styles.lyricEmpty]}
+                  >
+                    {lyrics.lines[activeLineIdx - 1]?.text ?? ' '}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => seekToLine(lyrics.lines[activeLineIdx]?.startSec)}
+                  disabled={!lyrics.lines[activeLineIdx]?.startSec}
+                  accessibilityLabel="Current lyric"
+                  hitSlop={6}
+                  style={({ pressed }) => [pressed && styles.lyricPressed]}
                 >
-                  {lyrics.lines[activeLineIdx + 1]?.text ?? ' '}
-                </Text>
+                  <Text numberOfLines={2} style={styles.lyricActive}>
+                    {lyrics.lines[activeLineIdx]?.text ?? ' '}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => seekToLine(lyrics.lines[activeLineIdx + 1]?.startSec)}
+                  disabled={!lyrics.lines[activeLineIdx + 1]?.startSec}
+                  accessibilityLabel="Next lyric"
+                  hitSlop={6}
+                  style={({ pressed }) => [pressed && styles.lyricPressed]}
+                >
+                  <Text
+                    numberOfLines={2}
+                    style={[styles.lyricNext, !lyrics.lines[activeLineIdx + 1] && styles.lyricEmpty]}
+                  >
+                    {lyrics.lines[activeLineIdx + 1]?.text ?? ' '}
+                  </Text>
+                </Pressable>
               </Animated.View>
             )}
           </View>
@@ -273,8 +309,31 @@ export default function NowPlayingScreen() {
           </View>
         </Pressable>
         <View style={styles.timeRow}>
-          <Text style={styles.timeTextSmall}>{formatTime(position)}</Text>
-          <Text style={styles.timeTextSmall}>{formatTime(displayDuration)}</Text>
+          <Pressable
+            onPress={() => {
+              if (!track) return;
+              void seek(0);
+            }}
+            hitSlop={8}
+            disabled={!track}
+            accessibilityLabel="Restart from beginning"
+            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Text style={styles.timeTextSmall}>{formatTime(position)}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              if (!track || displayDuration <= 0) return;
+              // Seek to 10s before end (lets the user "skip to near the end")
+              void seek(Math.max(0, displayDuration - 10));
+            }}
+            hitSlop={8}
+            disabled={!track || displayDuration <= 0}
+            accessibilityLabel="Skip near end"
+            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Text style={styles.timeTextSmall}>{formatTime(displayDuration)}</Text>
+          </Pressable>
         </View>
 
         {lastError ? (
@@ -482,6 +541,9 @@ const styles = StyleSheet.create({
   },
   lyricEmpty: {
     opacity: 0,
+  },
+  lyricPressed: {
+    opacity: 0.6,
   },
 
   // Progress bar
