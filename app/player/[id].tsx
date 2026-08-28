@@ -369,14 +369,18 @@ export default function NowPlayingScreen() {
                 // size:cover would letterbox the photo to fit
                 // inside the disc circle. To hide the letterbox
                 // bars (the parent's black background showing
-                // through), we zoom the image by ~15% before the
-                // disc clips it. The zoom level (1.15) is enough
-                // to ensure any 16:9 or 4:3 source fully covers
-                // the circle, with the edges clipped cleanly.
+                // through), we zoom the image significantly before
+                // the disc clips it. The zoom level (200%) is
+                // enough to ensure any 16:9 or 4:3 source fully
+                // covers the circle, with the edges clipped
+                // cleanly. We accept that more of the photo gets
+                // cropped (the disc shows the center of the photo
+                // only) but that's the standard vinyl-record look
+                // anyway.
                 artUri
                   ? ({
                       backgroundImage: `url("${artUri}")`,
-                      backgroundSize: '135% 135%',
+                      backgroundSize: '200% 200%',
                       backgroundPosition: 'center',
                       backgroundRepeat: 'no-repeat',
                     } as any)
