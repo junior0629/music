@@ -1,13 +1,15 @@
 import React, { useEffect } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
 import { GlassCard } from '@/components/GlassCard';
 import { GlassPanel } from '@/components/GlassPanel';
 import { useColors, textStyle, spacing, radii } from '@/theme';
 import { usePlayerStore } from '@/store/playerStore';
+import { useLibraryStore } from '@/store/libraryStore';
 import { logger } from '@/utils/logger';
 
 const PLACEHOLDER_THUMB =
@@ -37,6 +39,9 @@ export default function NowPlayingScreen() {
   const isBuffering = usePlayerStore((s) => s.isBuffering);
   const lastError = usePlayerStore((s) => s.lastError);
 
+  const isFavorite = useLibraryStore((s) => s.isFavorite);
+  const toggleFavorite = useLibraryStore((s) => s.toggleFavorite);
+
   useEffect(() => {
     logger.setContext('NowPlayingScreen');
     logger.info('Opened', { trackId: id, hasTrack: Boolean(currentTrack) });
@@ -46,15 +51,48 @@ export default function NowPlayingScreen() {
   const track = currentTrack;
   const displayDuration = track?.durationSec ?? duration ?? 0;
 
+  const favorited = track ? isFavorite(track.id) : false;
+  const artUri = track?.thumbnail ?? PLACEHOLDER_THUMB;
+
   return (
     <View style={[styles.root, { backgroundColor: colors.bgBase }]}>
-      <LinearGradient
-        colors={[colors.accentGradient.from, colors.accentGradient.via, colors.accentGradient.to]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[StyleSheet.absoluteFill, { opacity: 0.25 }]}
-        pointerEvents="none"
-      />
+      {/* Blurred album-artwork background. On web (where the URL
+          is rendered by the platform Image), CSS `filter: blur`
+          gives us a true Gaussian blur. On native, we layer a
+          BlurView on top of the Image which uses the OS blur
+          (much more performant than a runtime pixel filter). */}
+      {Platform.OS === 'web' ? (
+        <>
+          <View style={[StyleSheet.absoluteFill, styles.artBgWrap]} pointerEvents="none">
+            <Image
+              source={{ uri: artUri }}
+              style={styles.artBg}
+              blurRadius={40}
+            />
+          </View>
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: 'rgba(0,0,0,0.45)' },
+            ]}
+            pointerEvents="none"
+          />
+        </>
+      ) : (
+        <>
+          <Image
+            source={{ uri: artUri }}
+            style={[StyleSheet.absoluteFill, { opacity: 0.85 }]}
+            blurRadius={40}
+          />
+          <BlurView
+            intensity={60}
+            tint="dark"
+            style={StyleSheet.absoluteFill}
+            pointerEvents="none"
+          />
+        </>
+      )}
 
       <View style={[styles.content, { paddingTop: insets.top + spacing.md }]}>
         <View style={styles.header}>
@@ -126,7 +164,28 @@ export default function NowPlayingScreen() {
           </Pressable>
           <View style={styles.timeRow}>
             <Text style={[textStyle('caption'), { color: colors.textMuted }]}>{formatTime(position)}</Text>
-            <Text style={[textStyle('caption'), { color: colors.textMuted }]}>{formatTime(displayDuration)}</Text>
+            <View style={styles.timeRowRight}>
+              <Text style={[textStyle('caption'), { color: colors.textMuted, marginRight: spacing.md }]}>
+                {formatTime(displayDuration)}
+              </Text>
+              <Pressable
+                onPress={() => track && toggleFavorite(track)}
+                hitSlop={10}
+                disabled={!track}
+                accessibilityLabel={favorited ? 'Unfavorite' : 'Favorite'}
+                style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+              >
+                <Text
+                  style={{
+                    color: favorited ? colors.accent : colors.textMuted,
+                    fontSize: 18,
+                    lineHeight: 20,
+                  }}
+                >
+                  {favorited ? '♥' : '♡'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
           {lastError ? (
             <Text style={[textStyle('caption'), { color: colors.danger, marginTop: 4, textAlign: 'center' }]}>
@@ -213,7 +272,7 @@ export default function NowPlayingScreen() {
             <View style={styles.bottomRow}>
               <BottomAction label="Queue" sublabel="Empty" />
               <BottomAction label="Lyrics" sublabel="Phase 5" />
-              <BottomAction label="Favorite" sublabel={track ? 'Tap' : '—'} />
+              <BottomAction label="Share" sublabel="Phase 5" />
             </View>
           </GlassPanel>
         </Animated.View>
@@ -295,7 +354,22 @@ const styles = StyleSheet.create({
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginTop: 6,
+  },
+  timeRowRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Web needs `overflow: hidden` on the wrapper so the blurred
+  // image (which extends past the viewport on purpose, to avoid
+  // visible edges when blurred) doesn't bleed past the screen.
+  artBgWrap: {
+    overflow: 'hidden',
+  },
+  artBg: {
+    ...StyleSheet.absoluteFillObject,
+    transform: [{ scale: 1.2 }],
   },
   controls: {
     flexDirection: 'row',
