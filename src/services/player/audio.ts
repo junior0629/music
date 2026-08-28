@@ -120,6 +120,21 @@ function loadYouTubeAPI(): Promise<void> {
   return _apiReady;
 }
 
+/** PlayerState constants (we don't import the YT type). */
+const STATE_ENDED = 0;
+const STATE_PLAYING = 1;
+const STATE_PAUSED = 2;
+const STATE_BUFFERING = 3;
+const STATE_CUED = 5;
+
+/**
+ * If the player sits in BUFFERING for longer than this, the video
+ * is almost certainly region-blocked, age-restricted, or has
+ * embedding disabled. We surface a clear error instead of letting
+ * the UI show a perpetual spinner.
+ */
+const BUFFERING_WATCHDOG_MS = 8_000;
+
 class YouTubeIFrameAudioService implements AudioService {
   private player: YTPlayer | null = null;
   private container: HTMLDivElement | null = null;
@@ -130,15 +145,26 @@ class YouTubeIFrameAudioService implements AudioService {
   private errorListeners = new Set<(m: string) => void>();
   private bufferingListeners = new Set<(b: boolean) => void>();
   private positionPollHandle: ReturnType<typeof setInterval> | null = null;
+  private bufferingWatchdog: ReturnType<typeof setTimeout> | null = null;
   private lastKnownState = -1;
   private destroyed = false;
+  // True once the user has interacted with the player at least once.
+  // After that, subsequent loads auto-play (the iframe is "trusted"
+  // by the browser). Before that, the play button on the NowPlaying
+  // screen provides the user gesture that unlocks playback.
+  private hasPlayedOnce = false;
+  // True while a track is loading and the IFrame has not yet fired
+  // onReady. play() polls this and queues the play call to fire
+  // immediately after onReady, so a user tap on play during load
+  // doesn't get silently dropped.
+  private loading = false;
 
   async load(track: Track, stream: StreamInfo): Promise<void> {
     this.currentTrack = track;
     this.currentStream = stream;
-    // Stop any prior polling before tearing down the old player
+    this.loading = true;
     this.stopPositionPolling();
-    // Mark the old player as torn down so any in-flight state events are ignored
+    this.clearBufferingWatchdog();
     this.destroyed = true;
     await loadYouTubeAPI();
     if (!window.YT?.Player) throw new Error('YouTube IFrame API not available');
@@ -156,19 +182,22 @@ class YouTubeIFrameAudioService implements AudioService {
       this.container.remove();
       this.container = null;
     }
-    // Reset destroyed flag for the new player
     this.destroyed = false;
 
-    // Create container — sized 0×0 but visible so playback works
-    // (offscreen iframes may not play in some browsers)
+    // Create container. The trick: Chrome's autoplay policy treats
+    // iframes with very low opacity or 0×0 size as not visible, and
+    // refuses to play audio. We give it a real size and full
+    // opacity, then push it off-screen via translateY so the user
+    // can't see it but the browser still considers it visible.
     const container = document.createElement('div');
     container.style.position = 'fixed';
     container.style.bottom = '0';
     container.style.right = '0';
-    container.style.width = '1px';
-    container.style.height = '1px';
-    container.style.opacity = '0';
+    container.style.width = '480px';
+    container.style.height = '270px';
+    container.style.opacity = '1';
     container.style.pointerEvents = 'none';
+    container.style.transform = 'translateY(120%)';
     container.id = `yt-player-${Math.random().toString(36).slice(2, 8)}`;
     document.body.appendChild(container);
     this.container = container;
@@ -194,45 +223,70 @@ class YouTubeIFrameAudioService implements AudioService {
               try {
                 e.target.setVolume(80);
               } catch {}
-              logger.info('YT player ready', { videoId, title: track.title });
+              this.loading = false;
+              // If the user has interacted before, kick off playback
+              // automatically. (First-load auto-play is blocked by
+              // Chrome's autoplay policy; the play button on the
+              // NowPlaying screen provides the gesture for that.)
+              if (this.hasPlayedOnce) {
+                try {
+                  e.target.playVideo();
+                } catch {}
+              }
               resolve();
             },
             onStateChange: (e) => this.handleStateChange(e.data),
             onError: (e) => {
               if (this.destroyed) return;
               const msg = ytErrorMessage(e.data);
-              logger.error('YT player error', { code: e.data, msg });
               this.errorListeners.forEach((l) => l(msg));
             },
           },
         });
       } catch (err) {
+        this.loading = false;
         reject(err);
       }
     });
   }
 
   async play(): Promise<void> {
-    if (!this.player) {
-      logger.warn('YT play: no player loaded');
+    if (!this.player) return;
+
+    const doPlay = () => {
+      try {
+        this.player!.playVideo();
+        this.hasPlayedOnce = true;
+      } catch (err) {
+        logger.warn('YT play failed', { err: String(err) });
+      }
+    };
+
+    // If the iframe isn't ready yet, wait for it. playVideo() called
+    // before onReady is silently dropped by the YT IFrame API.
+    if (this.loading) {
+      const waitForReady = () => {
+        if (this.destroyed) return;
+        if (!this.loading) {
+          doPlay();
+        } else {
+          setTimeout(waitForReady, 50);
+        }
+      };
+      waitForReady();
       return;
     }
-    try {
-      this.player.playVideo();
-    } catch (err) {
-      logger.error('YT play failed', { err: String(err) });
-    }
+    doPlay();
   }
 
   async pause(): Promise<void> {
     if (!this.player) return;
-    try {
-      this.player.pauseVideo();
-    } catch {}
+    try { this.player.pauseVideo(); } catch {}
   }
 
   async unload(): Promise<void> {
     this.stopPositionPolling();
+    this.clearBufferingWatchdog();
     this.destroyed = true;
     if (this.player) {
       try { this.player.destroy(); } catch {}
@@ -250,9 +304,7 @@ class YouTubeIFrameAudioService implements AudioService {
     if (!this.player) return;
     try {
       this.player.seekTo(Math.max(0, positionSec), true);
-    } catch (err) {
-      logger.warn('YT seek failed', { err: String(err) });
-    }
+    } catch {}
   }
 
   async setVolume(volume: number): Promise<void> {
@@ -283,31 +335,47 @@ class YouTubeIFrameAudioService implements AudioService {
   }
 
   private handleStateChange(state: number): void {
-    // Ignore state events after the player has been torn down
     if (this.destroyed) return;
     this.lastKnownState = state;
-    // PlayerState constants (we don't import the YT type)
-    const ENDED = 0;
-    const PLAYING = 1;
-    const PAUSED = 2;
-    const BUFFERING = 3;
-    const CUED = 5;
 
-    if (state === BUFFERING) {
+    if (state === STATE_BUFFERING) {
       this.bufferingListeners.forEach((l) => l(true));
+      this.armBufferingWatchdog();
     } else {
-      // Anything else means we have data
       this.bufferingListeners.forEach((l) => l(false));
+      this.clearBufferingWatchdog();
     }
 
-    if (state === PLAYING) {
+    if (state === STATE_PLAYING) {
       this.startPositionPolling();
     } else {
       this.stopPositionPolling();
     }
 
-    if (state === ENDED) {
+    if (state === STATE_ENDED) {
       this.endedListeners.forEach((l) => l());
+    }
+  }
+
+  private armBufferingWatchdog(): void {
+    this.clearBufferingWatchdog();
+    this.bufferingWatchdog = setTimeout(() => {
+      if (
+        !this.destroyed &&
+        this.player &&
+        this.lastKnownState === STATE_BUFFERING
+      ) {
+        this.errorListeners.forEach((l) =>
+          l('Video stuck buffering (region/age/embed block?)'),
+        );
+      }
+    }, BUFFERING_WATCHDOG_MS);
+  }
+
+  private clearBufferingWatchdog(): void {
+    if (this.bufferingWatchdog) {
+      clearTimeout(this.bufferingWatchdog);
+      this.bufferingWatchdog = null;
     }
   }
 
@@ -388,7 +456,6 @@ class NativeAudioService implements AudioService {
     }
     this.player = this.createPlayer({ uri: stream.url });
     this.wirePlayerEvents(this.player);
-    logger.info('audio.loaded (native)', { title: track.title });
   }
 
   async play(): Promise<void> {
@@ -491,8 +558,8 @@ class NativeAudioService implements AudioService {
 // ============================================================
 
 class NoopAudioService implements AudioService {
-  async load(): Promise<void> { logger.debug('audio.load (noop)'); }
-  async play(): Promise<void> { logger.debug('audio.play (noop)'); }
+  async load(): Promise<void> {}
+  async play(): Promise<void> {}
   async pause(): Promise<void> {}
   async unload(): Promise<void> {}
   async seek(): Promise<void> {}

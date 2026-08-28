@@ -64,12 +64,29 @@ export class YouTubeProvider implements MusicProvider {
       (i) => i.id.kind === 'youtube#video' && i.snippet.liveBroadcastContent === 'none',
     );
 
-    // Fetch durations in a single batched call (1 quota unit vs 100 per search)
+    // Fetch durations AND embeddable status in a single batched call
+    // (1 quota unit vs 100 per search). We filter out non-embeddable
+    // videos because the YT IFrame Player silently fails to play them
+    // (the video owner has "Allow embedding" disabled).
     const videoIds = videoItems.map((i) => i.id.videoId);
-    const durations = await this.fetchDurations(videoIds);
+    const meta = await this.fetchVideoMeta(videoIds);
+    const playableItems = videoItems.filter((i) => {
+      const m = meta.get(i.id.videoId);
+      // If we couldn't fetch status (rare), include the video and
+      // let the user discover it's unplayable.
+      return m?.embeddable !== false;
+    });
+    if (videoItems.length > 0 && playableItems.length < videoItems.length) {
+      logger.info('Filtered non-embeddable results', {
+        total: videoItems.length,
+        playable: playableItems.length,
+      });
+    }
 
     return {
-      tracks: videoItems.map((i) => searchItemToTrack(i, durations.get(i.id.videoId) ?? 0)),
+      tracks: playableItems.map((i) =>
+        searchItemToTrack(i, meta.get(i.id.videoId)?.durationSec ?? 0),
+      ),
       albums: [],
       artists: [],
       source: SOURCE_NAME,
@@ -82,10 +99,13 @@ export class YouTubeProvider implements MusicProvider {
     }
     const url =
       `${BASE}/videos?key=${encodeURIComponent(config.youtubeApiKey)}` +
-      `&id=${encodeURIComponent(id)}&part=snippet,contentDetails`;
+      `&id=${encodeURIComponent(id)}&part=snippet,contentDetails,status`;
     const data = await this.fetchJson<YouTubeVideoListResponse>(url, 10_000);
     const v = data?.items?.[0];
     if (!v) throw new Error(`Video not found: ${id}`);
+    if (v.status?.embeddable === false) {
+      throw new Error(`Video not embeddable: ${v.snippet.title}`);
+    }
     return {
       id: v.id,
       title: v.snippet.title,
@@ -117,22 +137,28 @@ export class YouTubeProvider implements MusicProvider {
 
   // ---- internal helpers ----
 
-  private async fetchDurations(
+  private async fetchVideoMeta(
     videoIds: ReadonlyArray<string>,
-  ): Promise<Map<string, number>> {
+  ): Promise<Map<string, { durationSec: number; embeddable: boolean }>> {
     if (videoIds.length === 0) return new Map();
     try {
       const url =
         `${BASE}/videos?key=${encodeURIComponent(config.youtubeApiKey)}` +
-        `&id=${videoIds.map(encodeURIComponent).join(',')}&part=contentDetails`;
+        `&id=${videoIds.map(encodeURIComponent).join(',')}` +
+        `&part=contentDetails,status`;
       const data = await this.fetchJson<YouTubeVideoListResponse>(url, 10_000);
-      const map = new Map<string, number>();
+      const map = new Map<string, { durationSec: number; embeddable: boolean }>();
       for (const v of data?.items ?? []) {
-        map.set(v.id, iso8601DurationToSeconds(v.contentDetails.duration));
+        map.set(v.id, {
+          durationSec: iso8601DurationToSeconds(v.contentDetails.duration),
+          // status.embeddable defaults to true if not present (older
+          // videos), so we treat undefined as "embeddable".
+          embeddable: v.status?.embeddable !== false,
+        });
       }
       return map;
     } catch (err) {
-      logger.warn('YouTubeProvider.fetchDurations failed', { err: String(err) });
+      logger.warn('YouTubeProvider.fetchVideoMeta failed', { err: String(err) });
       return new Map();
     }
   }

@@ -10,18 +10,23 @@
 
 ## Current status
 
-🟡 **Phase 2 — Real search + real playback via YouTube (in progress, ready for browser test)**
+🟡 **Phase 2 — Real search + real playback via YouTube (in progress, audio working)**
 - ✅ YouTube Data API v3 key obtained + stored in `.env.local` (gitignored), `src/config/keys.ts` reads via `EXPO_PUBLIC_YOUTUBE_API_KEY`
-- ✅ `YouTubeProvider` implemented: search via `/search?type=video&videoCategoryId=10`, batched duration fetch via `/videos?part=contentDetails`
+- ✅ `YouTubeProvider` implemented: search via `/search?type=video&videoCategoryId=10`, batched metadata fetch via `/videos?part=contentDetails,status`
+- ✅ `YouTubeProvider` filters out videos with `status.embeddable === false` — owner-restricted videos never appear in results (otherwise the IFrame silently fails to play)
 - ✅ `YouTubeIFrameAudioService` (web) wraps the YouTube IFrame Player API; falls back to `expo-audio` on native
 - ✅ Same `AudioService` interface — no changes needed in `playerStore`
 - ✅ `playerStore` wired: loadTrack → getStreamUrl → audio.load → play; next/prev/seek/position events flow
 - ✅ Position polling via 250ms `getCurrentTime()` ticks; onStateChange wires buffering + ended events
-- ✅ IFrame player container is a 1×1 invisible div appended to `document.body` so audio works without taking screen space
+- ✅ IFrame player container is 480×270 with `transform: translateY(120%)` so Chrome sees it as "visible" (else autoplay is blocked) but the user can't see it
+- ✅ Buffering watchdog: if the player sits in BUFFERING for 8s+, fire a clear "stuck buffering (region/age/embed block?)" error
+- ✅ Auto-continue: after the first user-initiated play, subsequent tracks (next/prev) auto-play because the iframe is now "trusted" by the browser
 - ✅ Destroy-guard prevents stale state events from a torn-down player firing on the new one
 - ✅ `PIPED_INSTANCES` constant + `PipedProvider`/`pipedTypes` files deleted; provider factory points to `YouTubeProvider`
 - ✅ `.env.example` template added for future setup
-- 🟡 **Awaiting end-to-end browser test** — search → tap result → confirm playback
+- ✅ Typecheck clean, bundle compiles (6.27 MB, HTTP 200)
+- ✅ **Verified end-to-end in Edge browser**: search → tap result → tap play → audio plays
+- ⚠️ Chrome: works only with no YouTube-blocking extensions (ad-blockers can block the iframe). Edge is the recommended test browser until Phase 4 native build
 - ⏳ Phase 3: SQLite for playlists, favorites, history (depends on Phase 2 verification)
 
 ✅ **Phase 1 — App shell + glass UI primitives (complete)**
@@ -158,11 +163,12 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 ### 2.2 YouTubeProvider
 - [x] `src/services/music/YouTubeProvider.ts` — implements `MusicProvider`
 - [x] API key in `.env.local` (gitignored), read via `src/config/keys.ts` and `EXPO_PUBLIC_YOUTUBE_API_KEY`
-- [x] `search()` — `GET /search?key=…&q=…&type=video&videoCategoryId=10&maxResults=25` + batched `GET /videos?part=contentDetails` for duration
+- [x] `search()` — `GET /search?key=…&q=…&type=video&videoCategoryId=10&maxResults=25` + batched `GET /videos?part=contentDetails,status` for duration AND embeddable check
+- [x] Filter out videos with `status.embeddable === false` (owner-blocked embeds — IFrame would silently fail)
 - [x] ISO 8601 duration parsing (`PT#H#M#S` → seconds)
 - [x] Best-thumbnail picker (maxres → standard → high → medium → default)
 - [x] `getStreamUrl()` — returns `https://www.youtube.com/watch?v=ID` (the IFrame player handles playback)
-- [x] `getTrack()` — `GET /videos?part=snippet,contentDetails&id=…`
+- [x] `getTrack()` — `GET /videos?part=snippet,contentDetails,status&id=…` (rejects non-embeddable)
 - [x] `getAlbum()` / `getArtist()` — throw with clear "not implemented" messages (YouTube has no concept)
 
 ### 2.3 Audio playback
@@ -173,11 +179,15 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - [x] Position polling (250ms) → updates `usePlayerStore`
 - [x] `onStateChange` → `onBuffering` (state 3), `onEnded` (state 0), start/stop polling
 - [x] `onError` → maps YouTube error codes to human messages
+- [x] Buffering watchdog: 8s in BUFFERING → "stuck buffering" error (region/age/embed block)
+- [x] Auto-continue after first play: subsequent loads auto-play because the iframe is now trusted
 - [x] Destroy-guard: stale state events from a torn-down player are ignored
+- [x] Play-while-loading queue: tap play during track load → fires when onReady arrives
 
 ### 2.4 Wire up the UI
 - [x] Search input calls `provider.search()` (350ms debounce)
-- [x] Result tap → `loadTrack` → `play` → store updated
+- [x] Result tap → `loadTrack` → navigate to Now Playing
+- [x] User taps play button on Now Playing → fresh user gesture → playback starts
 - [x] Mini-player reads from store
 - [x] Now Playing screen shows live state, full player controls (play/pause/next/prev/shuffle/repeat/seek)
 
@@ -187,11 +197,12 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - [x] Smooth color transition (no transition needed; just-in-time swap)
 
 **Definition of done for Phase 2:**
-- [ ] Search "Taylor Swift" returns real results with real thumbnails — pending browser test
-- [ ] Tap a result → it actually plays — pending browser test
-- [ ] Mini-player shows the playing track — pending browser test
-- [ ] Pause/play, next, previous, seek all work — pending browser test
-- [ ] App survives a real song start-to-finish without crashing — pending browser test
+- [x] Search "Taylor Swift" returns real results with real thumbnails — verified in Edge
+- [x] Tap a result → it actually plays — verified in Edge
+- [x] Mini-player shows the playing track — verified
+- [x] Pause/play, next, previous, seek all work — verified
+- [x] App survives a real song start-to-finish without crashing — verified
+- ⚠️ Chrome: blocked by YouTube-blocking extensions (ad-blockers). Edge works. Phase 4 native build avoids this entirely.
 
 ---
 

@@ -60,6 +60,20 @@ export interface YouTubeVideoItem {
     licensedContent: boolean;
     regionRestriction?: { allowed?: string[]; blocked?: string[] };
   };
+  status: {
+    uploadStatus: string;
+    failureReason?: string;
+    rejectionReason?: string;
+    privacyStatus: string;
+    publishAt?: string;
+    /**
+     * Whether the video can be embedded in an iframe player.
+     * YouTube respects each video's "Allow embedding" setting;
+     * if false, our IFrame player will fail silently to play it.
+     */
+    embeddable: boolean;
+    license: string;
+  };
 }
 
 export interface YouTubeVideoListResponse {

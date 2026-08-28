@@ -54,8 +54,16 @@ export default function SearchScreen() {
 
   const play = async (track: Track) => {
     try {
+      // Load the track (constructs the IFrame, waits for onReady).
+      // We don't auto-play from search — the user has to tap the
+      // play button on the NowPlaying screen. This is intentional:
+      // (1) gives the user a moment to see the artwork/title,
+      // (2) makes the play button a real, observable interaction
+      // rather than something that fires-and-forgets from search.
+      // After the first play, subsequent tracks (next/prev) auto-
+      // continue because the iframe is already "trusted" by the
+      // browser.
       await loadTrack(track, results);
-      await usePlayerStore.getState().play();
     } catch (err) {
       const e = err as Error;
       logger.error('SearchScreen.play failed', { id: track.id, title: track.title, err: e?.message ?? String(err) }, e);
