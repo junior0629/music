@@ -365,20 +365,21 @@ export default function NowPlayingScreen() {
                 artSpinStyle,
                 // The artwork is the disc's CSS background. The
                 // thumbnail's natural aspect ratio varies (16:9,
-                // 4:3, 1:1, or even portrait), so we can't use a
-                // fixed zoom percentage without distorting the
-                // image. Instead, use background-size: cover,
-                // which scales the image to fully cover the box
-                // while preserving aspect ratio. For a 16:9 source
-                // in a 1:1 box, this scales to 1.78x (width fills,
-                // height overflows — the disc's overflow:hidden
-                // clips the top/bottom). For a portrait source,
-                // the width overflows (clipped left/right). The
-                // image is never stretched or letterboxed.
+                // 4:3, 1:1, or even portrait), AND the photo's
+                // content often has dark areas around the
+                // subject. If we use background-size:cover, the
+                // photo preserves aspect ratio but exposes those
+                // dark areas (the photo's own dark sides) inside
+                // the disc circle, which looks like a "black
+                // gap". Instead, we stretch the image to 100% in
+                // both dimensions so the entire disc circle is
+                // filled with photo content. The image is
+                // slightly squished/stretched but the disc looks
+                // clean and full.
                 artUri
                   ? ({
                       backgroundImage: `url("${artUri}")`,
-                      backgroundSize: 'cover',
+                      backgroundSize: '100% 100%',
                       backgroundPosition: 'center',
                       backgroundRepeat: 'no-repeat',
                     } as any)
