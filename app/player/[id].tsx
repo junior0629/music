@@ -6,12 +6,18 @@ import Animated, {
   Easing,
   FadeIn,
   FadeInDown,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withTiming,
   cancelAnimation,
 } from 'react-native-reanimated';
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+} from 'react-native-gesture-handler';
 import { BlurView } from 'expo-blur';
 import { useColors, spacing, radii, fontFamily } from '@/theme';
 import { usePlayerStore } from '@/store/playerStore';
@@ -126,24 +132,63 @@ export default function NowPlayingScreen() {
   // cadence is correct for both slow songs and rap, and the user can
   // tap a line to seek forward if it ever lands late.
   const LOOKAHEAD_SEC = 0.3;
-  const activeLineIdx = useMemo(() => {
+  const { activeLineIdx, preVocal } = useMemo(() => {
     if (lyrics.kind === 'synced' && lyrics.lines.length > 0) {
+      // Detect "artist hasn't started yet" — the first LRC line's
+      // startSec is often a few seconds in. Before the singer is
+      // actually audible, don't highlight any line; just let the user
+      // see the upcoming lyrics as placeholders. We use the FIRST
+      // LRC line's startSec (not the active one) as the threshold.
+      const firstStart = lyrics.lines[0]?.startSec ?? 0;
+      if (position + LOOKAHEAD_SEC < firstStart) {
+        return { activeLineIdx: -1, preVocal: true };
+      }
       const target = position + LOOKAHEAD_SEC;
       let i = 0;
       for (let k = 0; k < lyrics.lines.length; k++) {
         if ((lyrics.lines[k].startSec ?? 0) <= target) i = k;
         else break;
       }
-      return i;
+      return { activeLineIdx: i, preVocal: false };
     }
     if (lyrics.kind === 'plain' && lyrics.lines.length > 0 && displayDuration > 0) {
-      return Math.min(
-        lyrics.lines.length - 1,
-        Math.floor(position / (displayDuration / lyrics.lines.length)),
-      );
+      return {
+        activeLineIdx: Math.min(
+          lyrics.lines.length - 1,
+          Math.floor(position / (displayDuration / lyrics.lines.length)),
+        ),
+        preVocal: false,
+      };
     }
-    return 0;
+    return { activeLineIdx: 0, preVocal: false };
   }, [lyrics, position, displayDuration]);
+
+  // Shared value driving the smooth-scroll offset. We keep this in
+  // reanimated so the translateY animates with withTiming instead of
+  // snap-jumping on every position update. The math:
+  //   rail translateY = viewportHeight/2 - LYRIC_LINE_HEIGHT/2
+  //                     - activeLineIdx * LYRIC_LINE_HEIGHT
+  // This places the active row exactly at the viewport's vertical
+  // center, regardless of how many lines the song has. The rail
+  // itself is just a column of fixed-height rows; no centering
+  // inside the viewport (which would offset the math by half the
+  // rail's total height).
+  const lyricScroll = useSharedValue(0);
+  const viewportHeightRef = useRef(0);
+  const LYRIC_LINE_HEIGHT = 32; // must match styles.lyricRow.height
+  useEffect(() => {
+    const vh = viewportHeightRef.current;
+    if (vh === 0) return;
+    const center = vh / 2 - LYRIC_LINE_HEIGHT / 2;
+    const target = activeLineIdx < 0 ? 0 : center - activeLineIdx * LYRIC_LINE_HEIGHT;
+    lyricScroll.value = withTiming(target, {
+      duration: 320,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [activeLineIdx, lyricScroll]);
+  const lyricScrollStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: lyricScroll.value }],
+  }));
 
   // Tap a lyric line → seek to that line's timestamp. Only meaningful
   // for synced LRC lines (those have a startSec). For plain lyrics
@@ -156,8 +201,30 @@ export default function NowPlayingScreen() {
   const favorited = track ? isFavorite(track.id) : false;
   const artUri = track?.thumbnail ?? PLACEHOLDER_THUMB;
 
+  // Draggable seek: tap or drag anywhere on the bar to seek. The
+  // gesture runs on the UI thread (worklet) and only jumps back to
+  // JS to call seek() — so the bar updates smoothly even mid-drag.
+  // We use the pressable's measured width as the denominator (not
+  // window.innerWidth) so the math is correct on every screen size.
+  const seekGesture = useMemo(() => {
+    const seekToX = (x: number) => {
+      if (!track || displayDuration <= 0) return;
+      const width = seekBarWidthRef.current || 300;
+      const ratio = Math.max(0, Math.min(1, x / Math.max(1, width)));
+      void seek(ratio * displayDuration);
+    };
+    return Gesture.Pan()
+      .minDistance(0)
+      .onBegin((e) => {
+        runOnJS(seekToX)(e.x);
+      })
+      .onUpdate((e) => {
+        runOnJS(seekToX)(e.x);
+      });
+  }, [track, displayDuration, seek]);
+
   return (
-    <View style={styles.root}>
+    <GestureHandlerRootView style={styles.root}>
       {/* Blurred album-artwork background. Web uses CSS `filter: blur`
           on a 1.2×-scaled image wrapped in overflow:hidden. Native
           layers a BlurView on top of the image for OS-level blur.
@@ -221,62 +288,73 @@ export default function NowPlayingScreen() {
 
           <View style={styles.lyricsColumn}>
             {lyrics.kind === 'instrumental' ? (
-              <Text style={styles.lyricActive}>♪ Instrumental</Text>
+              <Text style={[styles.lyricText, styles.lyricTextActive]}>♪ Instrumental</Text>
             ) : lyrics.kind === 'none' && lyricsLoading ? (
-              <Text style={styles.lyricPrev}>…</Text>
+              <Text style={[styles.lyricText, styles.lyricTextFuture]}>…</Text>
             ) : lyrics.kind === 'none' ? (
-              <Text style={styles.lyricPrev}>Lyrics not available</Text>
+              <Text style={[styles.lyricText, styles.lyricTextFuture]}>Lyrics not available</Text>
             ) : (
-              <Animated.View
-                key={activeLineIdx}
-                entering={FadeIn.duration(220)}
-                style={styles.lyricStack}
+              <View
+                style={styles.lyricViewport}
+                onLayout={(e) => {
+                  const h = e.nativeEvent.layout.height;
+                  if (h > 0 && h !== viewportHeightRef.current) {
+                    viewportHeightRef.current = h;
+                    // Recompute scroll for the new viewport size
+                    const center = h / 2 - LYRIC_LINE_HEIGHT / 2;
+                    const target =
+                      activeLineIdx < 0
+                        ? 0
+                        : center - activeLineIdx * LYRIC_LINE_HEIGHT;
+                    lyricScroll.value = withTiming(target, {
+                      duration: 220,
+                      easing: Easing.out(Easing.cubic),
+                    });
+                  }
+                }}
               >
-                <Pressable
-                  onPress={() => seekToLine(lyrics.lines[activeLineIdx - 1]?.startSec)}
-                  disabled={!lyrics.lines[activeLineIdx - 1]?.startSec}
-                  accessibilityLabel="Previous lyric"
-                  hitSlop={6}
-                  style={({ pressed }) => [pressed && styles.lyricPressed]}
-                >
-                  <Text
-                    numberOfLines={2}
-                    style={[styles.lyricPrev, !lyrics.lines[activeLineIdx - 1] && styles.lyricEmpty]}
-                  >
-                    {lyrics.lines[activeLineIdx - 1]?.text ?? ' '}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => seekToLine(lyrics.lines[activeLineIdx]?.startSec)}
-                  disabled={!lyrics.lines[activeLineIdx]?.startSec}
-                  accessibilityLabel="Current lyric"
-                  hitSlop={6}
-                  style={({ pressed }) => [pressed && styles.lyricPressed]}
-                >
-                  <Text
-                    style={styles.lyricActive}
-                    // No numberOfLines cap — the active lyric line
-                    // can be long, and we'd rather wrap than truncate
-                    // (the user is reading it).
-                  >
-                    {lyrics.lines[activeLineIdx]?.text ?? ' '}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => seekToLine(lyrics.lines[activeLineIdx + 1]?.startSec)}
-                  disabled={!lyrics.lines[activeLineIdx + 1]?.startSec}
-                  accessibilityLabel="Next lyric"
-                  hitSlop={6}
-                  style={({ pressed }) => [pressed && styles.lyricPressed]}
-                >
-                  <Text
-                    numberOfLines={2}
-                    style={[styles.lyricNext, !lyrics.lines[activeLineIdx + 1] && styles.lyricEmpty]}
-                  >
-                    {lyrics.lines[activeLineIdx + 1]?.text ?? ' '}
-                  </Text>
-                </Pressable>
-              </Animated.View>
+                {/* All lines stacked, with the inner view translated up
+                    so the active line sits at viewport center. The
+                    viewport's overflow:hidden clips the other lines
+                    so we only see prev/active/next. Tap a line to
+                    seek there. */}
+                <Animated.View style={[styles.lyricRail, lyricScrollStyle]}>
+                  {lyrics.lines.map((l, idx) => {
+                    const isActive = idx === activeLineIdx;
+                    const isPast = activeLineIdx >= 0 && idx < activeLineIdx;
+                    const isFuture = activeLineIdx >= 0 && idx > activeLineIdx;
+                    const variant = isActive
+                      ? 'active'
+                      : isPast
+                      ? 'past'
+                      : isFuture
+                      ? 'future'
+                      : 'placeholder';
+                    return (
+                      <Pressable
+                        key={idx}
+                        onPress={() => seekToLine(l.startSec)}
+                        disabled={!l.startSec}
+                        accessibilityLabel={`Lyric line ${idx + 1}`}
+                        style={styles.lyricRow}
+                      >
+                        <Text
+                          numberOfLines={2}
+                          style={[
+                            styles.lyricText,
+                            variant === 'active' && styles.lyricTextActive,
+                            variant === 'past' && styles.lyricTextPast,
+                            variant === 'future' && styles.lyricTextFuture,
+                            variant === 'placeholder' && styles.lyricTextFuture,
+                          ]}
+                        >
+                          {l.text}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </Animated.View>
+              </View>
             )}
           </View>
         </View>
@@ -296,44 +374,26 @@ export default function NowPlayingScreen() {
             </Text>
           </Pressable>
         </View>
-        <Pressable
-          onLayout={(e) => {
-            seekBarWidthRef.current = e.nativeEvent.layout.width;
-          }}
-          onPress={(e) => {
-            if (!track || displayDuration <= 0) return;
-            const x = (e.nativeEvent as any)?.locationX ?? 0;
-            // Prefer the measured width; fall back to the event's
-            // own measured width, then to a screen-relative estimate.
-            const measured = seekBarWidthRef.current;
-            const eventWidth = (e.nativeEvent as any)?.target?.offsetWidth as
-              | number
-              | undefined;
-            const width =
-              measured > 0
-                ? measured
-                : typeof eventWidth === 'number' && eventWidth > 0
-                ? eventWidth
-                : typeof window !== 'undefined'
-                ? window.innerWidth - 40
-                : 300;
-            const ratio = Math.max(0, Math.min(1, x / Math.max(1, width)));
-            void seek(ratio * displayDuration);
-          }}
-          hitSlop={6}
-          accessibilityLabel="Seek"
-        >
-          <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.progressFill,
-                {
-                  width: `${displayDuration > 0 ? Math.min(100, (position / displayDuration) * 100) : 0}%`,
-                },
-              ]}
-            />
+        <GestureDetector gesture={seekGesture}>
+          <View
+            onLayout={(e) => {
+              seekBarWidthRef.current = e.nativeEvent.layout.width;
+            }}
+            style={styles.progressHitArea}
+            accessibilityLabel="Seek"
+          >
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: `${displayDuration > 0 ? Math.min(100, (position / displayDuration) * 100) : 0}%`,
+                  },
+                ]}
+              />
+            </View>
           </View>
-        </Pressable>
+        </GestureDetector>
         <View style={styles.timeRow}>
           <Pressable
             onPress={() => {
@@ -437,7 +497,7 @@ export default function NowPlayingScreen() {
           </Pressable>
         </Animated.View>
       </View>
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -531,45 +591,49 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Lyrics column on the right — one line at a time, centered
+  // Lyrics column on the right. Renders all lines stacked, with the
+  // inner "rail" translated up so the active line is centered in
+  // the viewport. The viewport's overflow:hidden clips the rest.
   lyricsColumn: {
     flex: 1,
     paddingLeft: spacing.lg,
+  },
+  lyricViewport: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  lyricRail: {
+    // The rail's vertical position is set by translateY (animated).
+    // We do NOT set height/width here — those come from the rows.
+  },
+  lyricRow: {
+    height: 32,
     justifyContent: 'center',
-    alignItems: 'stretch',
-  },
-  lyricStack: {
     alignItems: 'center',
+    paddingHorizontal: spacing.sm,
   },
-  lyricPrev: {
-    color: TEXT_MUTED,
-    fontSize: 13,
-    lineHeight: 20,
+  lyricText: {
     textAlign: 'center',
-    fontWeight: '400',
-    marginBottom: 4,
     fontFamily: fontFamily.oswald,
     letterSpacing: 0.3,
   },
-  lyricActive: {
+  lyricTextActive: {
     color: TEXT_PRIMARY,
     fontSize: 19,
-    lineHeight: 26,
-    textAlign: 'center',
+    lineHeight: 22,
     fontWeight: '700',
-    marginVertical: 6,
-    fontFamily: fontFamily.oswald,
-    letterSpacing: 0.3,
   },
-  lyricNext: {
-    color: TEXT_MUTED,
-    fontSize: 13,
-    lineHeight: 20,
-    textAlign: 'center',
+  lyricTextPast: {
+    color: TEXT_SECONDARY,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: '400',
-    marginTop: 4,
-    fontFamily: fontFamily.oswald,
-    letterSpacing: 0.3,
+  },
+  lyricTextFuture: {
+    color: TEXT_MUTED,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '400',
   },
   lyricEmpty: {
     opacity: 0,
@@ -608,6 +672,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: 'rgba(255,255,255,0.2)',
     marginTop: 4,
+  },
+  progressHitArea: {
+    paddingVertical: 10,
   },
   progressFill: {
     height: '100%',
