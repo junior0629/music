@@ -363,18 +363,23 @@ export default function NowPlayingScreen() {
               style={[
                 styles.artDisc,
                 artSpinStyle,
-                // The artwork is the disc's CSS background. We tried
-                // using RN's <Image> element with resizeMode="cover",
-                // but on web the Image element renders the photo at
-                // its natural size with the disc's backgroundColor
-                // showing through as letterbox bars. Using a CSS
-                // background-image guarantees the photo scales to
-                // cover the entire 180x180 disc, edge to edge, with
-                // no bars. backgroundImage isn't in RN's standard
-                // ViewStyle type, but RN Web does support it at
-                // runtime (and it's a standard CSS property).
+                // The artwork is the disc's CSS background. The
+                // thumbnail's natural aspect ratio is often wider
+                // than 1:1 (e.g. 16:9 for YouTube), so background-
+                // size:cover would letterbox the photo to fit
+                // inside the disc circle. To hide the letterbox
+                // bars (the parent's black background showing
+                // through), we zoom the image by ~15% before the
+                // disc clips it. The zoom level (1.15) is enough
+                // to ensure any 16:9 or 4:3 source fully covers
+                // the circle, with the edges clipped cleanly.
                 artUri
-                  ? ({ backgroundImage: `url("${artUri}")` } as any)
+                  ? ({
+                      backgroundImage: `url("${artUri}")`,
+                      backgroundSize: '135% 135%',
+                      backgroundPosition: 'center',
+                      backgroundRepeat: 'no-repeat',
+                    } as any)
                   : null,
               ]}
             >
@@ -622,23 +627,18 @@ const styles = StyleSheet.create({
   },
   // Vinyl-record style artwork. The disc is a single 180x180 round
   // box with overflow:hidden. The artwork is set as the disc's CSS
-  // background-image (via inline style in the JSX), with
-  // backgroundSize:'cover' so the photo scales to fill the entire
-  // circle edge-to-edge with no letterbox bars.
-  // (backgroundSize/backgroundPosition/backgroundRepeat are CSS
-  // properties RN Web supports on View; not in the standard
-  // ViewStyle type but valid at runtime.)
+  // background-image (via inline style in the JSX). The background
+  // is intentionally zoomed (135%) so any letterbox bars from the
+  // source's aspect ratio are pushed outside the disc, where the
+  // overflow:hidden clips them. backgroundImage/backgroundSize
+  // aren't in RN's standard ViewStyle type but RN Web supports
+  // them at runtime as standard CSS properties.
   artDisc: {
     width: 180,
     height: 180,
     borderRadius: 90,
     overflow: 'hidden',
     backgroundColor: '#000',
-    ...({
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      backgroundRepeat: 'no-repeat',
-    } as any),
   },
   artSpindle: {
     position: 'absolute',
