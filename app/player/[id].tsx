@@ -109,6 +109,8 @@ function LyricRow({
   onPress: (startSec: number | undefined) => void;
 }): React.ReactElement {
   const text = line?.text ?? ' ';
+  // Active line can grow to 3 lines; neighbors cap at 2 to keep the
+  // slide visually tight.
   return (
     <Pressable
       onPress={() => onPress(line?.startSec)}
@@ -120,7 +122,7 @@ function LyricRow({
       ]}
     >
       <Text
-        numberOfLines={2}
+        numberOfLines={isActive ? 3 : 2}
         style={[
           styles.lyricText,
           isActive ? styles.lyricTextActive : styles.lyricTextPast,
@@ -601,7 +603,7 @@ const styles = StyleSheet.create({
     minHeight: 220,
   },
   artColumn: {
-    width: '45%',
+    width: '40%',
     alignItems: 'center',
   },
   // Vinyl-record style artwork. The outer ring + spindle give the
@@ -659,10 +661,12 @@ const styles = StyleSheet.create({
   lyricsColumn: {
     flex: 1,
     paddingLeft: spacing.lg,
+    paddingRight: spacing.sm,
     justifyContent: 'center',
   },
   lyricCarousel: {
     height: LYRIC_ROW_HEIGHT * (LYRIC_WINDOW * 2 + 1),
+    width: '100%',
     justifyContent: 'center',
     alignItems: 'stretch',
     overflow: 'hidden',
@@ -681,29 +685,30 @@ const styles = StyleSheet.create({
     minHeight: 32,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs,
   },
   lyricText: {
     textAlign: 'center',
     fontFamily: fontFamily.oswald,
     letterSpacing: 0.3,
+    flexShrink: 1,
   },
   lyricTextActive: {
     color: TEXT_PRIMARY,
-    fontSize: 22,
-    lineHeight: 28,
+    fontSize: 20,
+    lineHeight: 26,
     fontWeight: '800',
   },
   lyricTextPast: {
     color: TEXT_SECONDARY,
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '400',
   },
   lyricTextFuture: {
     color: TEXT_MUTED,
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '400',
   },
   lyricPressed: {
