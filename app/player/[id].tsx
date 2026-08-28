@@ -364,23 +364,21 @@ export default function NowPlayingScreen() {
                 styles.artDisc,
                 artSpinStyle,
                 // The artwork is the disc's CSS background. The
-                // thumbnail's natural aspect ratio is often wider
-                // than 1:1 (e.g. 16:9 for YouTube), so background-
-                // size:cover would letterbox the photo to fit
-                // inside the disc circle. To hide the letterbox
-                // bars (the parent's black background showing
-                // through), we zoom the image significantly before
-                // the disc clips it. The zoom level (200%) is
-                // enough to ensure any 16:9 or 4:3 source fully
-                // covers the circle, with the edges clipped
-                // cleanly. We accept that more of the photo gets
-                // cropped (the disc shows the center of the photo
-                // only) but that's the standard vinyl-record look
-                // anyway.
+                // thumbnail's natural aspect ratio varies (16:9,
+                // 4:3, 1:1, or even portrait), so we can't use a
+                // fixed zoom percentage without distorting the
+                // image. Instead, use background-size: cover,
+                // which scales the image to fully cover the box
+                // while preserving aspect ratio. For a 16:9 source
+                // in a 1:1 box, this scales to 1.78x (width fills,
+                // height overflows — the disc's overflow:hidden
+                // clips the top/bottom). For a portrait source,
+                // the width overflows (clipped left/right). The
+                // image is never stretched or letterboxed.
                 artUri
                   ? ({
                       backgroundImage: `url("${artUri}")`,
-                      backgroundSize: '200% 200%',
+                      backgroundSize: 'cover',
                       backgroundPosition: 'center',
                       backgroundRepeat: 'no-repeat',
                     } as any)
