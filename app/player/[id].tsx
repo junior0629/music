@@ -1,13 +1,19 @@
 import React, { useEffect } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  FadeIn,
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  cancelAnimation,
+} from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
-import { GlassCard } from '@/components/GlassCard';
-import { GlassPanel } from '@/components/GlassPanel';
-import { useColors, textStyle, spacing, radii } from '@/theme';
+import { useColors, spacing, radii } from '@/theme';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { logger } from '@/utils/logger';
@@ -17,6 +23,31 @@ const PLACEHOLDER_THUMB =
   encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="%237C3AED"/><stop offset="0.5" stop-color="%23EC4899"/><stop offset="1" stop-color="%233B82F6"/></linearGradient></defs><rect width="400" height="400" fill="url(%23g)"/></svg>',
   );
+
+/**
+ * Placeholder lyric lines shown when no real-time lyric source
+ * is wired up. Real lyrics are Phase 5 (see PHASES.md) — for now
+ * this gives the layout the same visual rhythm as the reference.
+ * Cycles through the lines so the screen has motion.
+ */
+const SAMPLE_LYRICS: ReadonlyArray<{ line: string; emphasis: 'high' | 'normal' | 'low' }> = [
+  { line: 'deep breaths, honey', emphasis: 'low' },
+  { line: "we’re at least til morning", emphasis: 'high' },
+  { line: "then there’s nowhere,", emphasis: 'normal' },
+  { line: 'nowhere we have to be', emphasis: 'normal' },
+  { line: 'so stay with me a while', emphasis: 'low' },
+  { line: 'just see how the light falls', emphasis: 'high' },
+  { line: 'on everything you wear', emphasis: 'normal' },
+  { line: 'and every word you say', emphasis: 'low' },
+  { line: "we don't need the city", emphasis: 'normal' },
+  { line: "we don’t need the noise", emphasis: 'low' },
+  { line: 'just your voice', emphasis: 'high' },
+  { line: 'and this quiet', emphasis: 'low' },
+];
+
+const TEXT_PRIMARY = '#FFFFFF';
+const TEXT_SECONDARY = 'rgba(255,255,255,0.78)';
+const TEXT_MUTED = 'rgba(255,255,255,0.55)';
 
 export default function NowPlayingScreen() {
   const colors = useColors();
@@ -48,33 +79,53 @@ export default function NowPlayingScreen() {
     return () => logger.clearContext();
   }, [id, currentTrack]);
 
+  // Spinning artwork: only spin while playing. Pause → freeze the
+  // rotation where it is; play → resume from current angle.
+  const spin = useSharedValue(0);
+  useEffect(() => {
+    if (isPlaying) {
+      spin.value = withRepeat(
+        withTiming(360, { duration: 18_000, easing: Easing.linear }),
+        -1,
+        false,
+      );
+    } else {
+      cancelAnimation(spin);
+    }
+  }, [isPlaying, spin]);
+  const artSpinStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${spin.value}deg` }],
+  }));
+
+  // Highlighted lyric index is the function of elapsed position
+  // modulo the lyric count. With 12 lines and a 3:11 track that's
+  // ~16s per line, which roughly matches real lyric cadence.
   const track = currentTrack;
   const displayDuration = track?.durationSec ?? duration ?? 0;
+  const lineDurationSec = displayDuration > 0
+    ? displayDuration / SAMPLE_LYRICS.length
+    : 8;
+  const activeLineIdx = Math.min(
+    SAMPLE_LYRICS.length - 1,
+    Math.floor(position / lineDurationSec),
+  );
 
   const favorited = track ? isFavorite(track.id) : false;
   const artUri = track?.thumbnail ?? PLACEHOLDER_THUMB;
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.bgBase }]}>
-      {/* Blurred album-artwork background. On web (where the URL
-          is rendered by the platform Image), CSS `filter: blur`
-          gives us a true Gaussian blur. On native, we layer a
-          BlurView on top of the Image which uses the OS blur
-          (much more performant than a runtime pixel filter). */}
+    <View style={styles.root}>
+      {/* Blurred album-artwork background. Web uses CSS `filter: blur`
+          on a 1.2×-scaled image wrapped in overflow:hidden. Native
+          layers a BlurView on top of the image for OS-level blur.
+          A dark scrim sits on top so white text stays readable. */}
       {Platform.OS === 'web' ? (
         <>
           <View style={[StyleSheet.absoluteFill, styles.artBgWrap]} pointerEvents="none">
-            <Image
-              source={{ uri: artUri }}
-              style={styles.artBg}
-              blurRadius={40}
-            />
+            <Image source={{ uri: artUri }} style={styles.artBg} blurRadius={40} />
           </View>
           <View
-            style={[
-              StyleSheet.absoluteFill,
-              { backgroundColor: 'rgba(0,0,0,0.45)' },
-            ]}
+            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.55)' }]}
             pointerEvents="none"
           />
         </>
@@ -82,11 +133,11 @@ export default function NowPlayingScreen() {
         <>
           <Image
             source={{ uri: artUri }}
-            style={[StyleSheet.absoluteFill, { opacity: 0.85 }]}
+            style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
             blurRadius={40}
           />
           <BlurView
-            intensity={60}
+            intensity={70}
             tint="dark"
             style={StyleSheet.absoluteFill}
             pointerEvents="none"
@@ -94,106 +145,106 @@ export default function NowPlayingScreen() {
         </>
       )}
 
-      <View style={[styles.content, { paddingTop: insets.top + spacing.md }]}>
+      <View style={[styles.content, { paddingTop: insets.top + spacing.md, paddingBottom: insets.bottom + spacing.md }]}>
+        {/* Header: 'NOW PLAYING' label + close (←) — both white */}
         <View style={styles.header}>
-          <Text style={[textStyle('label'), { color: colors.textMuted }]}>
+          <Text style={styles.headerLabel}>
             {track ? 'NOW PLAYING' : 'NO TRACK'}
           </Text>
           <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Close player">
-            <Text style={[styles.closeIcon, { color: colors.textPrimary }]}>←</Text>
+            <Text style={styles.closeIcon}>←</Text>
           </Pressable>
         </View>
 
-        <Animated.View entering={FadeIn.duration(500)} style={styles.artWrap}>
-          <Image
-            source={{ uri: track?.thumbnail ?? PLACEHOLDER_THUMB }}
-            style={[
-              styles.art,
-              {
-                backgroundColor: colors.glassSurfaceSubtle,
-                shadowColor: colors.shadowStrong,
-              },
-            ]}
-          />
-        </Animated.View>
-
-        <Animated.View entering={FadeInDown.delay(150).duration(500)} style={styles.meta}>
-          <Text
-            numberOfLines={1}
-            style={[textStyle('title'), { color: colors.textPrimary, textAlign: 'center' }]}
-          >
-            {track?.title ?? 'Nothing playing'}
-          </Text>
-          <Text
-            numberOfLines={1}
-            style={[textStyle('body'), { color: colors.textSecondary, textAlign: 'center', marginTop: 4 }]}
-          >
-            {track?.artist ?? 'Pick a song from Search'}
-          </Text>
-        </Animated.View>
-
-        <Animated.View entering={FadeInDown.delay(220).duration(500)} style={styles.progress}>
-          <Pressable
-            onPress={(e) => {
-              if (!track || displayDuration <= 0) return;
-              const x = (e.nativeEvent as any)?.locationX ?? 0;
-              // For web, locationX is in pixels relative to the Pressable.
-              // For native, measure() is async; for now we use a fixed
-              // approximation: the pressable is full-width, so use
-              // window.innerWidth as a fallback. This is approximate
-              // but works for the demo; precise seek requires onLayout.
-              const fallbackWidth =
-                typeof window !== 'undefined' ? window.innerWidth - 40 : 300;
-              const ratio = Math.max(0, Math.min(1, x / Math.max(1, fallbackWidth)));
-              void seek(ratio * displayDuration);
-            }}
-            hitSlop={6}
-            accessibilityLabel="Seek"
-          >
-            <View style={[styles.progressTrack, { backgroundColor: colors.glassSurfaceStrong }]}>
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    backgroundColor: colors.accent,
-                    width: `${displayDuration > 0 ? Math.min(100, (position / displayDuration) * 100) : 0}%`,
-                  },
-                ]}
-              />
-            </View>
-          </Pressable>
-          <View style={styles.timeRow}>
-            <Text style={[textStyle('caption'), { color: colors.textMuted }]}>{formatTime(position)}</Text>
-            <View style={styles.timeRowRight}>
-              <Text style={[textStyle('caption'), { color: colors.textMuted, marginRight: spacing.md }]}>
-                {formatTime(displayDuration)}
-              </Text>
-              <Pressable
-                onPress={() => track && toggleFavorite(track)}
-                hitSlop={10}
-                disabled={!track}
-                accessibilityLabel={favorited ? 'Unfavorite' : 'Favorite'}
-                style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
-              >
-                <Text
-                  style={{
-                    color: favorited ? colors.accent : colors.textMuted,
-                    fontSize: 18,
-                    lineHeight: 20,
-                  }}
-                >
-                  {favorited ? '♥' : '♡'}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-          {lastError ? (
-            <Text style={[textStyle('caption'), { color: colors.danger, marginTop: 4, textAlign: 'center' }]}>
-              {lastError}
+        {/* Middle: artwork on the left, lyrics on the right */}
+        <View style={styles.middle}>
+          <View style={styles.artColumn}>
+            <Animated.View style={[styles.artDisc, artSpinStyle]}>
+              {/* Outer ring (slight dark frame around the artwork) */}
+              <View style={styles.artRing}>
+                <Image source={{ uri: artUri }} style={styles.artImage} />
+              </View>
+              {/* Center spindle hole — the small dark circle at the
+                  center of a vinyl record / CD */}
+              <View style={styles.artSpindle} />
+            </Animated.View>
+            <Text numberOfLines={1} style={styles.titleText}>
+              {track?.title ?? 'Nothing playing'}
             </Text>
-          ) : null}
-        </Animated.View>
+            <Text numberOfLines={1} style={styles.artistText}>
+              {track?.artist ?? 'Pick a song from Search'}
+            </Text>
+          </View>
 
+          <View style={styles.lyricsColumn}>
+            {SAMPLE_LYRICS.map((l, idx) => {
+              const isActive = idx === activeLineIdx;
+              return (
+                <Text
+                  key={idx}
+                  numberOfLines={1}
+                  style={[
+                    styles.lyricLine,
+                    isActive ? styles.lyricActive : null,
+                    !isActive && idx < activeLineIdx ? styles.lyricPast : null,
+                  ]}
+                >
+                  {l.line}
+                </Text>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Progress + favorite heart (right-aligned, above controls) */}
+        <View style={styles.progressRow}>
+          <Text style={styles.timeText}>{formatTime(position)}</Text>
+          <View style={{ flex: 1 }} />
+          <Pressable
+            onPress={() => track && toggleFavorite(track)}
+            hitSlop={10}
+            disabled={!track}
+            accessibilityLabel={favorited ? 'Unfavorite' : 'Favorite'}
+            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Text style={[styles.heart, favorited ? styles.heartOn : null]}>
+              {favorited ? '♥' : '♡'}
+            </Text>
+          </Pressable>
+        </View>
+        <Pressable
+          onPress={(e) => {
+            if (!track || displayDuration <= 0) return;
+            const x = (e.nativeEvent as any)?.locationX ?? 0;
+            const fallbackWidth =
+              typeof window !== 'undefined' ? window.innerWidth - 40 : 300;
+            const ratio = Math.max(0, Math.min(1, x / Math.max(1, fallbackWidth)));
+            void seek(ratio * displayDuration);
+          }}
+          hitSlop={6}
+          accessibilityLabel="Seek"
+        >
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  width: `${displayDuration > 0 ? Math.min(100, (position / displayDuration) * 100) : 0}%`,
+                },
+              ]}
+            />
+          </View>
+        </Pressable>
+        <View style={styles.timeRow}>
+          <Text style={styles.timeTextSmall}>{formatTime(position)}</Text>
+          <Text style={styles.timeTextSmall}>{formatTime(displayDuration)}</Text>
+        </View>
+
+        {lastError ? (
+          <Text style={styles.errorText}>{lastError}</Text>
+        ) : null}
+
+        {/* Transport controls */}
         <Animated.View entering={FadeInDown.delay(280).duration(500)} style={styles.controls}>
           <Pressable
             onPress={toggleShuffle}
@@ -202,11 +253,10 @@ export default function NowPlayingScreen() {
             style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
           >
             <Text
-              style={{
-                color: isShuffled ? colors.accent : colors.textMuted,
-                fontSize: 18,
-                fontWeight: '700',
-              }}
+              style={[
+                styles.iconText,
+                { color: isShuffled ? TEXT_PRIMARY : TEXT_MUTED, fontSize: 20 },
+              ]}
             >
               ⇄
             </Text>
@@ -218,7 +268,7 @@ export default function NowPlayingScreen() {
             accessibilityLabel="Previous"
             style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
           >
-            <Text style={[styles.controlGlyph, { color: colors.textPrimary }]}>⏮</Text>
+            <Text style={[styles.iconText, { color: TEXT_PRIMARY, fontSize: 28 }]}>⏮</Text>
           </Pressable>
 
           <Pressable
@@ -228,14 +278,10 @@ export default function NowPlayingScreen() {
             accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
             style={({ pressed }) => [
               styles.playButton,
-              {
-                backgroundColor: colors.accentSoft,
-                borderColor: colors.glassBorderStrong,
-                opacity: pressed ? 0.85 : 1,
-              },
+              { opacity: pressed ? 0.85 : 1 },
             ]}
           >
-            <Text style={[styles.playGlyph, { color: colors.accent }]}>
+            <Text style={styles.playGlyph}>
               {isBuffering ? '◌' : isPlaying ? '⏸' : '▶'}
             </Text>
           </Pressable>
@@ -246,7 +292,7 @@ export default function NowPlayingScreen() {
             accessibilityLabel="Next"
             style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
           >
-            <Text style={[styles.controlGlyph, { color: colors.textPrimary }]}>⏭</Text>
+            <Text style={[styles.iconText, { color: TEXT_PRIMARY, fontSize: 28 }]}>⏭</Text>
           </Pressable>
 
           <Pressable
@@ -256,43 +302,20 @@ export default function NowPlayingScreen() {
             style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
           >
             <Text
-              style={{
-                color: repeat !== 'off' ? colors.accent : colors.textMuted,
-                fontSize: 18,
-                fontWeight: '700',
-              }}
+              style={[
+                styles.iconText,
+                {
+                  color: repeat !== 'off' ? TEXT_PRIMARY : TEXT_MUTED,
+                  fontSize: 20,
+                },
+              ]}
             >
               {repeat === 'one' ? '↻¹' : '↻'}
             </Text>
           </Pressable>
         </Animated.View>
-
-        <Animated.View entering={FadeInDown.delay(340).duration(500)}>
-          <GlassPanel padding={spacing.sm} radius={radii.lg}>
-            <View style={styles.bottomRow}>
-              <BottomAction label="Queue" sublabel="Empty" />
-              <BottomAction label="Lyrics" sublabel="Phase 5" />
-              <BottomAction label="Share" sublabel="Phase 5" />
-            </View>
-          </GlassPanel>
-        </Animated.View>
       </View>
     </View>
-  );
-}
-
-function BottomAction({ label, sublabel }: { label: string; sublabel: string }) {
-  const colors = useColors();
-  return (
-    <Pressable
-      style={({ pressed }) => [styles.bottomAction, { opacity: pressed ? 0.7 : 1 }]}
-      accessibilityLabel={label}
-    >
-      <Text style={[textStyle('caption'), { color: colors.textPrimary }]}>{label}</Text>
-      <Text style={[textStyle('label'), { color: colors.textMuted, marginTop: 2 }]}>
-        {sublabel.toUpperCase()}
-      </Text>
-    </Pressable>
   );
 }
 
@@ -304,78 +327,164 @@ function formatTime(sec: number): string {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-  },
+  root: { flex: 1 },
   content: {
     flex: 1,
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.lg,
   },
+
+  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  headerLabel: {
+    color: TEXT_MUTED,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.4,
   },
   closeIcon: {
+    color: TEXT_PRIMARY,
     fontSize: 28,
     fontWeight: '300',
   },
-  artWrap: {
+
+  // Middle row: artwork (left) + lyrics (right)
+  middle: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.lg,
+    minHeight: 220,
+  },
+  artColumn: {
+    width: '45%',
+    alignItems: 'center',
+  },
+  // Vinyl-record style artwork. The outer ring + spindle give the
+  // "spinning disc" feel from the reference.
+  artDisc: {
+    width: 180,
+    height: 180,
     alignItems: 'center',
     justifyContent: 'center',
-    maxHeight: 360,
   },
-  art: {
-    width: '85%',
-    aspectRatio: 1,
-    borderRadius: radii.xl,
-    shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.5,
-    shadowRadius: 32,
+  artRing: {
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
-  meta: {
-    marginVertical: spacing.lg,
+  artImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 90,
   },
-  progress: {
-    marginBottom: spacing.lg,
+  artSpindle: {
+    position: 'absolute',
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  titleText: {
+    color: TEXT_PRIMARY,
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  artistText: {
+    color: TEXT_SECONDARY,
+    fontSize: 13,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+
+  // Lyrics column on the right
+  lyricsColumn: {
+    flex: 1,
+    paddingLeft: spacing.lg,
+    justifyContent: 'center',
+  },
+  lyricLine: {
+    color: TEXT_MUTED,
+    fontSize: 16,
+    lineHeight: 26,
+    fontWeight: '500',
+  },
+  lyricActive: {
+    color: TEXT_PRIMARY,
+    fontSize: 19,
+    fontWeight: '800',
+    lineHeight: 30,
+  },
+  lyricPast: {
+    color: TEXT_SECONDARY,
+  },
+
+  // Progress bar
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+  },
+  timeText: {
+    color: TEXT_PRIMARY,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  timeTextSmall: {
+    color: TEXT_MUTED,
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  heart: {
+    color: TEXT_PRIMARY,
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  heartOn: {
+    color: '#FF4D6D',
   },
   progressTrack: {
     height: 4,
     borderRadius: 2,
     overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    marginTop: 4,
   },
   progressFill: {
     height: '100%',
     borderRadius: 2,
+    backgroundColor: TEXT_PRIMARY,
   },
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
     marginTop: 6,
   },
-  timeRowRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 12,
+    marginTop: spacing.sm,
+    textAlign: 'center',
   },
-  // Web needs `overflow: hidden` on the wrapper so the blurred
-  // image (which extends past the viewport on purpose, to avoid
-  // visible edges when blurred) doesn't bleed past the screen.
-  artBgWrap: {
-    overflow: 'hidden',
-  },
-  artBg: {
-    ...StyleSheet.absoluteFillObject,
-    transform: [{ scale: 1.2 }],
-  },
+
+  // Controls
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.lg,
+    marginTop: spacing.md,
     paddingHorizontal: spacing.sm,
   },
   playButton: {
@@ -384,23 +493,21 @@ const styles = StyleSheet.create({
     borderRadius: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
+    backgroundColor: TEXT_PRIMARY,
   },
   playGlyph: {
-    fontSize: 28,
+    color: '#0A0A14',
+    fontSize: 30,
+    fontWeight: '800',
+  },
+  iconText: {
     fontWeight: '700',
   },
-  controlGlyph: {
-    fontSize: 26,
-    fontWeight: '600',
-  },
-  bottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  bottomAction: {
-    alignItems: 'center',
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.md,
+
+  // Web background overflow guard
+  artBgWrap: { overflow: 'hidden' },
+  artBg: {
+    ...StyleSheet.absoluteFillObject,
+    transform: [{ scale: 1.2 }],
   },
 });
