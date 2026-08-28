@@ -224,27 +224,40 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 **Goal:** Persistence. Favorites survive a restart. Playlists work. Recently played is tracked.
 
 ### 3.1 Database
-- [ ] `src/database/schema.ts` — tables: `playlists`, `playlist_tracks`, `favorites`, `recently_played`, `play_count`
-- [ ] `src/database/index.ts` — DB init, migrations
-- [ ] `src/database/queries.ts` — typed query helpers
 
-### 3.2 Library
-- [ ] Favorites: add/remove/list
-- [ ] Playlists: create/rename/delete, add/remove/reorder tracks
-- [ ] Recently played: auto-tracked on track play
-- [ ] Play count: incremented on track play
-- [ ] All hydrated into `useLibraryStore`
+| Task | Files | Notes |
+|---|---|---|
+| Schema definition | `src/database/schema.ts` | `playlists` (id, name, created_at), `playlist_tracks` (playlist_id, track_id, position), `favorites` (track_id, added_at), `recently_played` (track_id, played_at), `play_count` (track_id, count, last_played_at) |
+| DB init + migrations | `src/database/index.ts` | Native: `expo-sqlite` (`openDatabaseAsync`, `execAsync`). Web: IndexedDB via the existing `services/storage` abstraction. Versioned migrations. |
+| Typed query helpers | `src/database/queries.ts` | `addFavorite`, `removeFavorite`, `listFavorites`, `createPlaylist`, `addTrackToPlaylist`, `reorderPlaylist`, `deletePlaylist`, `recordPlay`, `recentlyPlayed(limit=50)`, `topPlayed(limit=20)`, `topArtists(limit=10)` |
+| Hydrate `useLibraryStore` on app boot | `app/_layout.tsx` or `src/store/libraryStore.ts` | Async load from DB → set state. Don't block the first render. |
+
+### 3.2 Library logic
+
+| Task | Notes |
+|---|---|
+| Favorites: add/remove/list | Hook into the existing heart icon on search results and Now Playing. UI stays identical; just routes through DB on web. |
+| Playlists: create / rename / delete | Modal or inline sheet. Names up to ~40 chars. |
+| Playlists: add / remove / reorder tracks | Add from search result's overflow menu. Reorder via long-press drag in playlist detail. |
+| Recently played: auto-track on play | Increment on every `play()` call in `playerStore`. Keep last 50. |
+| Play count: increment on play | `play_count` row updated each time. Cheap UPSERT. |
 
 ### 3.3 Library screen
-- [ ] Favorites section lists favorited tracks
-- [ ] Playlists section lists all playlists
-- [ ] Tap playlist → playlist detail screen
-- [ ] Add-to-playlist works from search results
+
+| Task | Notes |
+|---|---|
+| Favorites section lists favorited tracks | Read from `useLibraryStore.favorites`; tappable to play. |
+| Playlists section lists all playlists | Tile per playlist with cover mosaic (first 4 track thumbs). |
+| Tap playlist → playlist detail screen | New route `app/library/playlist/[id].tsx`. |
+| Add-to-playlist works from search results | Overflow menu (⋯) on each result row → "Add to playlist" sheet. |
+| Recently Played section | Already a tile on Home; wire to real data. |
 
 **Definition of done for Phase 3:**
 - [ ] Favorite a track → restart app → it's still there
 - [ ] Create a playlist → add 3 songs → restart → still there
 - [ ] Recently played updates after each play
+- [ ] Reorder tracks in a playlist (drag to move)
+- [ ] All five tables populated correctly; manual DB inspect shows sensible rows
 
 ---
 

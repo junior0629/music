@@ -6,6 +6,7 @@ import Animated, {
   Easing,
   FadeIn,
   FadeInDown,
+  LinearTransition,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -34,6 +35,44 @@ const PLACEHOLDER_THUMB =
 const TEXT_PRIMARY = '#FFFFFF';
 const TEXT_SECONDARY = 'rgba(255,255,255,0.78)';
 const TEXT_MUTED = 'rgba(255,255,255,0.55)';
+
+/** One lyric line in the 3-row stack. Tappable to seek. */
+function LyricRow({
+  line,
+  variant,
+  onPress,
+}: {
+  line: { text: string; startSec?: number } | undefined;
+  variant: 'past' | 'active' | 'future';
+  onPress: (startSec: number | undefined) => void;
+}): React.ReactElement {
+  const text = line?.text ?? ' ';
+  const style =
+    variant === 'active' ? styles.lyricTextActive
+    : variant === 'past' ? styles.lyricTextPast
+    : styles.lyricTextFuture;
+  const label =
+    variant === 'active' ? 'Current lyric' :
+    variant === 'past' ? 'Previous lyric' : 'Next lyric';
+  return (
+    <Pressable
+      onPress={() => onPress(line?.startSec)}
+      disabled={!line?.startSec}
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        styles.lyricRow,
+        pressed && styles.lyricPressed,
+      ]}
+    >
+      <Text
+        numberOfLines={variant === 'active' ? 3 : 2}
+        style={[styles.lyricText, style]}
+      >
+        {text}
+      </Text>
+    </Pressable>
+  );
+}
 
 export default function NowPlayingScreen() {
   const colors = useColors();
@@ -163,33 +202,6 @@ export default function NowPlayingScreen() {
     return { activeLineIdx: 0, preVocal: false };
   }, [lyrics, position, displayDuration]);
 
-  // Shared value driving the smooth-scroll offset. We keep this in
-  // reanimated so the translateY animates with withTiming instead of
-  // snap-jumping on every position update. The math:
-  //   rail translateY = viewportHeight/2 - LYRIC_LINE_HEIGHT/2
-  //                     - activeLineIdx * LYRIC_LINE_HEIGHT
-  // This places the active row exactly at the viewport's vertical
-  // center, regardless of how many lines the song has. The rail
-  // itself is just a column of fixed-height rows; no centering
-  // inside the viewport (which would offset the math by half the
-  // rail's total height).
-  const lyricScroll = useSharedValue(0);
-  const viewportHeightRef = useRef(0);
-  const LYRIC_LINE_HEIGHT = 32; // must match styles.lyricRow.height
-  useEffect(() => {
-    const vh = viewportHeightRef.current;
-    if (vh === 0) return;
-    const center = vh / 2 - LYRIC_LINE_HEIGHT / 2;
-    const target = activeLineIdx < 0 ? 0 : center - activeLineIdx * LYRIC_LINE_HEIGHT;
-    lyricScroll.value = withTiming(target, {
-      duration: 320,
-      easing: Easing.out(Easing.cubic),
-    });
-  }, [activeLineIdx, lyricScroll]);
-  const lyricScrollStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: lyricScroll.value }],
-  }));
-
   // Tap a lyric line → seek to that line's timestamp. Only meaningful
   // for synced LRC lines (those have a startSec). For plain lyrics
   // there are no timestamps to seek to, so the press is a no-op.
@@ -294,67 +306,30 @@ export default function NowPlayingScreen() {
             ) : lyrics.kind === 'none' ? (
               <Text style={[styles.lyricText, styles.lyricTextFuture]}>Lyrics not available</Text>
             ) : (
-              <View
-                style={styles.lyricViewport}
-                onLayout={(e) => {
-                  const h = e.nativeEvent.layout.height;
-                  if (h > 0 && h !== viewportHeightRef.current) {
-                    viewportHeightRef.current = h;
-                    // Recompute scroll for the new viewport size
-                    const center = h / 2 - LYRIC_LINE_HEIGHT / 2;
-                    const target =
-                      activeLineIdx < 0
-                        ? 0
-                        : center - activeLineIdx * LYRIC_LINE_HEIGHT;
-                    lyricScroll.value = withTiming(target, {
-                      duration: 220,
-                      easing: Easing.out(Easing.cubic),
-                    });
-                  }
-                }}
+              // 3-row lyric view: prev / active / next. The column
+              // uses LinearTransition so when activeLineIdx changes
+              // and the rows' content changes, reanimated animates
+              // the layout shift (slide up) automatically.
+              <Animated.View
+                layout={LinearTransition.duration(320)}
+                style={styles.lyricColumnInner}
               >
-                {/* All lines stacked, with the inner view translated up
-                    so the active line sits at viewport center. The
-                    viewport's overflow:hidden clips the other lines
-                    so we only see prev/active/next. Tap a line to
-                    seek there. */}
-                <Animated.View style={[styles.lyricRail, lyricScrollStyle]}>
-                  {lyrics.lines.map((l, idx) => {
-                    const isActive = idx === activeLineIdx;
-                    const isPast = activeLineIdx >= 0 && idx < activeLineIdx;
-                    const isFuture = activeLineIdx >= 0 && idx > activeLineIdx;
-                    const variant = isActive
-                      ? 'active'
-                      : isPast
-                      ? 'past'
-                      : isFuture
-                      ? 'future'
-                      : 'placeholder';
-                    return (
-                      <Pressable
-                        key={idx}
-                        onPress={() => seekToLine(l.startSec)}
-                        disabled={!l.startSec}
-                        accessibilityLabel={`Lyric line ${idx + 1}`}
-                        style={styles.lyricRow}
-                      >
-                        <Text
-                          numberOfLines={2}
-                          style={[
-                            styles.lyricText,
-                            variant === 'active' && styles.lyricTextActive,
-                            variant === 'past' && styles.lyricTextPast,
-                            variant === 'future' && styles.lyricTextFuture,
-                            variant === 'placeholder' && styles.lyricTextFuture,
-                          ]}
-                        >
-                          {l.text}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </Animated.View>
-              </View>
+                <LyricRow
+                  line={lyrics.lines[activeLineIdx - 1]}
+                  variant="past"
+                  onPress={seekToLine}
+                />
+                <LyricRow
+                  line={lyrics.lines[activeLineIdx]}
+                  variant="active"
+                  onPress={seekToLine}
+                />
+                <LyricRow
+                  line={lyrics.lines[activeLineIdx + 1]}
+                  variant="future"
+                  onPress={seekToLine}
+                />
+              </Animated.View>
             )}
           </View>
         </View>
@@ -591,25 +566,24 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // Lyrics column on the right. Renders all lines stacked, with the
-  // inner "rail" translated up so the active line is centered in
-  // the viewport. The viewport's overflow:hidden clips the rest.
+  // Lyrics column on the right. Three rows stacked vertically:
+  // prev / active / next. The active line is the middle row. The
+  // parent column uses LinearTransition so when activeLineIdx
+  // changes, the rows' text changes and reanimated animates the
+  // height shift (slide up) automatically.
   lyricsColumn: {
     flex: 1,
     paddingLeft: spacing.lg,
+    justifyContent: 'center',
   },
-  lyricViewport: {
-    flex: 1,
-    overflow: 'hidden',
-  },
-  lyricRail: {
-    // The rail's vertical position is set by translateY (animated).
-    // We do NOT set height/width here — those come from the rows.
+  lyricColumnInner: {
+    width: '100%',
   },
   lyricRow: {
-    height: 32,
+    minHeight: 56,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: spacing.xs,
     paddingHorizontal: spacing.sm,
   },
   lyricText: {
@@ -619,24 +593,21 @@ const styles = StyleSheet.create({
   },
   lyricTextActive: {
     color: TEXT_PRIMARY,
-    fontSize: 19,
-    lineHeight: 22,
-    fontWeight: '700',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
   },
   lyricTextPast: {
     color: TEXT_SECONDARY,
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '400',
   },
   lyricTextFuture: {
     color: TEXT_MUTED,
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '400',
-  },
-  lyricEmpty: {
-    opacity: 0,
   },
   lyricPressed: {
     opacity: 0.6,
