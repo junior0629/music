@@ -26,8 +26,8 @@ export default function NowPlayingScreen() {
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const position = usePlayerStore((s) => s.position);
   const duration = usePlayerStore((s) => s.duration);
-  const setPlaying = usePlayerStore((s) => s.setPlaying);
-  const setPosition = usePlayerStore((s) => s.setPosition);
+  const togglePlay = usePlayerStore((s) => s.togglePlay);
+  const seek = usePlayerStore((s) => s.seek);
   const next = usePlayerStore((s) => s.next);
   const prev = usePlayerStore((s) => s.prev);
   const toggleShuffle = usePlayerStore((s) => s.toggleShuffle);
@@ -35,6 +35,7 @@ export default function NowPlayingScreen() {
   const isShuffled = usePlayerStore((s) => s.isShuffled);
   const repeat = usePlayerStore((s) => s.repeat);
   const isBuffering = usePlayerStore((s) => s.isBuffering);
+  const lastError = usePlayerStore((s) => s.lastError);
 
   useEffect(() => {
     logger.setContext('NowPlayingScreen');
@@ -94,21 +95,44 @@ export default function NowPlayingScreen() {
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(220).duration(500)} style={styles.progress}>
-          <View style={[styles.progressTrack, { backgroundColor: colors.glassSurfaceStrong }]}>
-            <View
-              style={[
-                styles.progressFill,
-                {
-                  backgroundColor: colors.accent,
-                  width: `${displayDuration > 0 ? Math.min(100, (position / displayDuration) * 100) : 0}%`,
-                },
-              ]}
-            />
-          </View>
+          <Pressable
+            onPress={(e) => {
+              if (!track || displayDuration <= 0) return;
+              const x = (e.nativeEvent as any)?.locationX ?? 0;
+              // For web, locationX is in pixels relative to the Pressable.
+              // For native, measure() is async; for now we use a fixed
+              // approximation: the pressable is full-width, so use
+              // window.innerWidth as a fallback. This is approximate
+              // but works for the demo; precise seek requires onLayout.
+              const fallbackWidth =
+                typeof window !== 'undefined' ? window.innerWidth - 40 : 300;
+              const ratio = Math.max(0, Math.min(1, x / Math.max(1, fallbackWidth)));
+              void seek(ratio * displayDuration);
+            }}
+            hitSlop={6}
+            accessibilityLabel="Seek"
+          >
+            <View style={[styles.progressTrack, { backgroundColor: colors.glassSurfaceStrong }]}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    backgroundColor: colors.accent,
+                    width: `${displayDuration > 0 ? Math.min(100, (position / displayDuration) * 100) : 0}%`,
+                  },
+                ]}
+              />
+            </View>
+          </Pressable>
           <View style={styles.timeRow}>
             <Text style={[textStyle('caption'), { color: colors.textMuted }]}>{formatTime(position)}</Text>
             <Text style={[textStyle('caption'), { color: colors.textMuted }]}>{formatTime(displayDuration)}</Text>
           </View>
+          {lastError ? (
+            <Text style={[textStyle('caption'), { color: colors.danger, marginTop: 4, textAlign: 'center' }]}>
+              {lastError}
+            </Text>
+          ) : null}
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(280).duration(500)} style={styles.controls}>
@@ -139,7 +163,7 @@ export default function NowPlayingScreen() {
           </Pressable>
 
           <Pressable
-            onPress={() => setPlaying(!isPlaying)}
+            onPress={() => togglePlay()}
             hitSlop={8}
             disabled={!track}
             accessibilityLabel={isPlaying ? 'Pause' : 'Play'}

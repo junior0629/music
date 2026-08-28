@@ -3,9 +3,9 @@
  *
  * Phase 1: type definition only. A mock implementation is provided so
  * the UI can be developed without any network calls.
- * Phase 2: a real PipedProvider (calls public Piped REST instances
- * for YouTube-sourced tracks) replaces the mock. The interface stays
- * exactly the same.
+ * Phase 2: YouTubeProvider (official YouTube Data API v3 for search,
+ *   IFrame Player API for playback) replaces the mock. The interface
+ *   stays exactly the same.
  *
  * Swapping providers later is a one-line change in index.ts.
  */

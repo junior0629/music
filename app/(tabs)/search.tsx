@@ -24,21 +24,26 @@ export default function SearchScreen() {
 
   useEffect(() => {
     logger.setContext('SearchScreen');
-    // Load initial mock results so the screen isn't empty
-    runSearch('');
     return () => logger.clearContext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Debounce: only search after the user has paused typing
   useEffect(() => {
-    const t = setTimeout(() => runSearch(query), 250);
+    if (query.trim().length === 0) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const t = setTimeout(() => {
+      runSearch(query).catch(() => { /* error already logged */ });
+    }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   const runSearch = withErrorLogging('SearchScreen.search', async (q: string) => {
-    setLoading(true);
     try {
       const r = await getProvider().search(q);
       setResults(r.tracks);
@@ -47,8 +52,14 @@ export default function SearchScreen() {
     }
   });
 
-  const play = (track: Track) => {
-    loadTrack(track, results);
+  const play = async (track: Track) => {
+    try {
+      await loadTrack(track, results);
+      await usePlayerStore.getState().play();
+    } catch (err) {
+      const e = err as Error;
+      logger.error('SearchScreen.play failed', { id: track.id, title: track.title, err: e?.message ?? String(err) }, e);
+    }
     router.push(`/player/${track.id}`);
   };
 
@@ -79,7 +90,7 @@ export default function SearchScreen() {
           </View>
         </GlassPanel>
         <Text style={[textStyle('caption'), { color: colors.textMuted, marginTop: spacing.xs }]}>
-          {getProvider().name === 'mock' ? 'Mock provider — Phase 1 demo' : ''}{loading ? ' · searching…' : ''}
+          {getProvider().name}{loading ? ' · searching…' : ''}
         </Text>
       </View>
 
@@ -90,7 +101,11 @@ export default function SearchScreen() {
         {results.length === 0 ? (
           <GlassCard padding="lg" radius="lg" style={{ marginTop: spacing.xl }}>
             <Text style={[textStyle('body'), { color: colors.textMuted, textAlign: 'center' }]}>
-              {loading ? 'Searching...' : 'No results'}
+              {loading
+                ? 'Searching…'
+                : query.trim().length === 0
+                ? 'Type a song, artist, or album to search'
+                : 'No results — try a different query'}
             </Text>
           </GlassCard>
         ) : (

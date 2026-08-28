@@ -1,6 +1,6 @@
 /**
  * Player types — independent of any specific provider.
- * Phase 1: shape only. Phase 2: this is what PipedProvider returns.
+ * Phase 1: shape only. Phase 2: this is what YouTubeProvider returns.
  */
 export interface Track {
   id: string;

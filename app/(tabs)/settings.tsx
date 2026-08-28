@@ -63,7 +63,7 @@ export default function SettingsScreen() {
             {provider.name}
           </Text>
           <Text style={[textStyle('caption'), { color: colors.textMuted, marginTop: 6 }]}>
-            Real search and playback arrive in Phase 2.
+            Backed by the official YouTube Data API v3 + IFrame Player. Search returns real catalog results; playback streams via the embedded YouTube player.
           </Text>
         </GlassCard>
       </Animated.View>

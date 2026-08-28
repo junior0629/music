@@ -68,3 +68,6 @@ android/
 .env
 .env.local
 .env.*.local
+
+# Claude Code local state (may contain secrets in permission allowlist)
+.claude/

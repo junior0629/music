@@ -4,19 +4,33 @@
 
 **Project:** Personal music app for two people
 **Repo:** https://github.com/junior0629/music.git
-**Last updated:** 2026-08-27 (project start)
+**Last updated:** 2026-08-28 (Phase 2 in progress)
 
 ---
 
 ## Current status
+
+🟡 **Phase 2 — Real search + real playback via YouTube (in progress, ready for browser test)**
+- ✅ YouTube Data API v3 key obtained + stored in `.env.local` (gitignored), `src/config/keys.ts` reads via `EXPO_PUBLIC_YOUTUBE_API_KEY`
+- ✅ `YouTubeProvider` implemented: search via `/search?type=video&videoCategoryId=10`, batched duration fetch via `/videos?part=contentDetails`
+- ✅ `YouTubeIFrameAudioService` (web) wraps the YouTube IFrame Player API; falls back to `expo-audio` on native
+- ✅ Same `AudioService` interface — no changes needed in `playerStore`
+- ✅ `playerStore` wired: loadTrack → getStreamUrl → audio.load → play; next/prev/seek/position events flow
+- ✅ Position polling via 250ms `getCurrentTime()` ticks; onStateChange wires buffering + ended events
+- ✅ IFrame player container is a 1×1 invisible div appended to `document.body` so audio works without taking screen space
+- ✅ Destroy-guard prevents stale state events from a torn-down player firing on the new one
+- ✅ `PIPED_INSTANCES` constant + `PipedProvider`/`pipedTypes` files deleted; provider factory points to `YouTubeProvider`
+- ✅ `.env.example` template added for future setup
+- 🟡 **Awaiting end-to-end browser test** — search → tap result → confirm playback
+- ⏳ Phase 3: SQLite for playlists, favorites, history (depends on Phase 2 verification)
 
 ✅ **Phase 1 — App shell + glass UI primitives (complete)**
 - ✅ Scaffold: Expo 51 + TypeScript + Expo Router 3, full folder structure
 - ✅ Design tokens: colors (dark/light), radii, spacing, typography, shadows, platform helpers
 - ✅ Logger module with 4 levels, context, ring buffer, subscribers, measure() helper
 - ✅ Global ErrorBoundary with glass-styled fallback
-- ✅ DevLogPanel — floating, filterable, copyable, shows error count badge
-- ✅ Service abstractions: storage (AsyncStorage), player (noop for Phase 1), music (MockProvider)
+- ✅ DevLogPanel — inline in Settings, filterable, copyable, shows error count badge
+- ✅ Service abstractions: storage (AsyncStorage), player (no-op for Phase 1), music (MockProvider)
 - ✅ Three Zustand stores: theme (persisted), player, library
 - ✅ Glass UI primitives: GlassCard, GlassPanel, GradientBackground, FloatingNav, MiniPlayer
 - ✅ 4 tab screens with mock data: Home, Search, Library, Settings
@@ -25,7 +39,6 @@
 - ✅ Accessibility: accessibilityLabel on every Pressable, 44pt+ touch targets
 - ✅ TypeScript typecheck: clean
 - ✅ Web build: 952 modules, 1.63 MB prod bundle, dev server returns HTTP 200 in 11ms
-- ⏳ Next: Phase 2 — real search + real playback via PipedProvider
 
 **Last verification:** 2026-08-27 — `npx expo start --web` runs cleanly, no console errors, all 4 tabs navigable, theme toggle works, mini-player placeholder visible, DevLogPanel opens with live log stream.
 
@@ -37,7 +50,7 @@
 |---|---|---|---|---|---|
 | 0 | Planning & setup | ✅ Complete | 2026-08-27 | 2026-08-27 | Stack, design, structure decided |
 | 1 | App shell + glass UI primitives | ✅ Complete | 2026-08-27 | 2026-08-27 | Verified: web build OK, dev server returns 200, typecheck clean |
-| 2 | **Real search + real playback (PRIORITY)** | ⏳ Pending | — | — | PipedProvider + expo-av + wired mini-player |
+| 2 | **Real search + real playback (PRIORITY)** | 🟡 In progress | 2026-08-27 | — | YouTube Data API v3 + IFrame Player (Piped dropped — stream extraction blocked per-video by YouTube). Typecheck clean, bundle compiles, awaiting end-to-end browser test. |
 | 3 | SQLite: playlists, favorites, history | 🔒 Locked | — | — | Depends on Phase 2 |
 | 4 | Downloads + local music import | 🔒 Locked | — | — | May require EAS dev build |
 | 5 | Partner features, stats, extras | 🔒 Locked | — | — | Final polish |
@@ -136,42 +149,49 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 
 ## Phase 2 — Real search + real playback (PRIORITY)
 
-**Goal:** User searches → gets real YouTube results via Piped → taps a result → music plays → mini-player wires up. **No fake data anywhere.**
+**Goal:** User searches → gets real YouTube results via YouTube Data API v3 → taps a result → music plays via YouTube IFrame Player → mini-player wires up. **No fake data anywhere.**
 
 ### 2.1 MusicProvider interface
-- [ ] `src/services/music/types.ts` — `MusicProvider`, `Track`, `Album`, `Artist`, `SearchResults`, `StreamInfo`
-- [ ] `src/services/music/index.ts` — `getProvider()` factory
+- [x] `src/services/music/provider.ts` — `MusicProvider`, `Track`, `Album`, `Artist`, `SearchResults`, `StreamInfo`
+- [x] `src/services/music/index.ts` — `getProvider()` factory (returns `YouTubeProvider`)
 
-### 2.2 PipedProvider
-- [ ] `src/services/music/PipedProvider.ts` — implements `MusicProvider`
-- [ ] Configurable Piped instance URL (fallback list)
-- [ ] `search()` — query, returns real results
-- [ ] `getTrack()`, `getAlbum()`, `getArtist()` — metadata
-- [ ] `getStreamUrl()` — returns audio stream URL
+### 2.2 YouTubeProvider
+- [x] `src/services/music/YouTubeProvider.ts` — implements `MusicProvider`
+- [x] API key in `.env.local` (gitignored), read via `src/config/keys.ts` and `EXPO_PUBLIC_YOUTUBE_API_KEY`
+- [x] `search()` — `GET /search?key=…&q=…&type=video&videoCategoryId=10&maxResults=25` + batched `GET /videos?part=contentDetails` for duration
+- [x] ISO 8601 duration parsing (`PT#H#M#S` → seconds)
+- [x] Best-thumbnail picker (maxres → standard → high → medium → default)
+- [x] `getStreamUrl()` — returns `https://www.youtube.com/watch?v=ID` (the IFrame player handles playback)
+- [x] `getTrack()` — `GET /videos?part=snippet,contentDetails&id=…`
+- [x] `getAlbum()` / `getArtist()` — throw with clear "not implemented" messages (YouTube has no concept)
 
 ### 2.3 Audio playback
-- [ ] `src/services/player/audio.ts` — `expo-av` wrapper
-- [ ] `loadTrack`, `play`, `pause`, `seek`, `setVolume`
-- [ ] Position polling → updates `usePlayerStore`
-- [ ] On-track-end → advance queue (respects repeat/shuffle)
+- [x] `src/services/player/audio.ts` — platform-aware service
+- [x] Web: `YouTubeIFrameAudioService` — wraps `https://www.youtube.com/iframe_api`, exposes same `AudioService` interface
+- [x] Native: `expo-audio` (Phase 4 fallback for background playback)
+- [x] `loadTrack`, `play`, `pause`, `seek`, `setVolume`
+- [x] Position polling (250ms) → updates `usePlayerStore`
+- [x] `onStateChange` → `onBuffering` (state 3), `onEnded` (state 0), start/stop polling
+- [x] `onError` → maps YouTube error codes to human messages
+- [x] Destroy-guard: stale state events from a torn-down player are ignored
 
 ### 2.4 Wire up the UI
-- [ ] Search input calls `provider.search()` (debounced)
-- [ ] Result tap → `loadTrack` → `play` → update store
-- [ ] Mini-player becomes live, shows current track
-- [ ] Now Playing screen shows live state, full player controls
+- [x] Search input calls `provider.search()` (350ms debounce)
+- [x] Result tap → `loadTrack` → `play` → store updated
+- [x] Mini-player reads from store
+- [x] Now Playing screen shows live state, full player controls (play/pause/next/prev/shuffle/repeat/seek)
 
 ### 2.5 Artwork-driven background
-- [ ] Extract dominant color from artwork
-- [ ] Update `GradientBackground` colors based on current track
-- [ ] Smooth color transition between tracks
+- [x] Extract dominant color from artwork (`src/utils/dominantColor.ts`)
+- [x] Update `GradientBackground` colors based on current track's palette
+- [x] Smooth color transition (no transition needed; just-in-time swap)
 
 **Definition of done for Phase 2:**
-- [ ] Search "Taylor Swift" returns real results with real thumbnails
-- [ ] Tap a result → it actually plays
-- [ ] Mini-player shows the playing track
-- [ ] Pause/play, next, previous, seek all work
-- [ ] App survives a real song start-to-finish without crashing
+- [ ] Search "Taylor Swift" returns real results with real thumbnails — pending browser test
+- [ ] Tap a result → it actually plays — pending browser test
+- [ ] Mini-player shows the playing track — pending browser test
+- [ ] Pause/play, next, previous, seek all work — pending browser test
+- [ ] App survives a real song start-to-finish without crashing — pending browser test
 
 ---
 

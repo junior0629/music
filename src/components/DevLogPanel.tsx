@@ -17,6 +17,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GlassCard } from './GlassCard';
 import { useColors, textStyle, spacing, radii } from '@/theme';
 import { logger, LogEntry, LogLevel } from '@/utils/logger';
+import { copyToClipboard, formatLogEntries } from '@/utils/clipboard';
 
 const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
 
@@ -68,6 +69,30 @@ export function DevLogSection(): React.ReactElement | null {
   const errorCount = entries.filter((e) => e.level === 'error').length;
   const warnCount = entries.filter((e) => e.level === 'warn').length;
 
+  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
+
+  const handleCopyAll = async () => {
+    const dump = formatLogEntries(filtered);
+    const ok = await copyToClipboard(dump);
+    if (ok) {
+      setCopyState('copied');
+      logger.info(`Copied ${filtered.length} log entries to clipboard`, { source: 'devlog' });
+      setTimeout(() => setCopyState('idle'), 1500);
+    }
+  };
+
+  const handleCopyLastError = async () => {
+    const lastError = [...entries].reverse().find((e) => e.level === 'error');
+    if (!lastError) return;
+    const dump = formatLogEntries([lastError]);
+    const ok = await copyToClipboard(dump);
+    if (ok) {
+      setCopyState('copied');
+      logger.info('Copied last error to clipboard', { source: 'devlog' });
+      setTimeout(() => setCopyState('idle'), 1500);
+    }
+  };
+
   return (
     <View>
       <Text
@@ -80,7 +105,7 @@ export function DevLogSection(): React.ReactElement | null {
       </Text>
       <GlassCard padding={0} radius="lg">
         <View style={[styles.header, { borderBottomColor: colors.glassBorder }]}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={[textStyle('heading'), { color: colors.textPrimary }]}>
               Dev log
             </Text>
@@ -90,14 +115,30 @@ export function DevLogSection(): React.ReactElement | null {
               {warnCount > 0 ? ` · ${warnCount} warning${warnCount === 1 ? '' : 's'}` : ''}
             </Text>
           </View>
-          <Pressable
-            onPress={() => logger.clearContext()}
-            hitSlop={8}
-            accessibilityLabel="Clear log context"
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 6 }]}
-          >
-            <Text style={[textStyle('label'), { color: colors.accent }]}>CLEAR</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <HeaderAction
+              label={copyState === 'copied' ? 'COPIED' : 'COPY'}
+              onPress={handleCopyAll}
+              disabled={filtered.length === 0}
+              accent={colors.accent}
+              muted={colors.textMuted}
+            />
+            <HeaderAction
+              label="LAST ERR"
+              onPress={handleCopyLastError}
+              disabled={errorCount === 0}
+              accent={colors.danger}
+              muted={colors.textMuted}
+            />
+            <Pressable
+              onPress={() => logger.clearContext()}
+              hitSlop={8}
+              accessibilityLabel="Clear log context"
+              style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 6 }]}
+            >
+              <Text style={[textStyle('label'), { color: colors.accent }]}>CLEAR</Text>
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.filters}>
@@ -182,6 +223,39 @@ function LogRow({
   );
 }
 
+function HeaderAction({
+  label,
+  onPress,
+  disabled,
+  accent,
+  muted,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  accent: string;
+  muted: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      hitSlop={6}
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        styles.headerAction,
+        {
+          opacity: disabled ? 0.35 : pressed ? 0.6 : 1,
+        },
+      ]}
+    >
+      <Text style={[textStyle('label'), { color: disabled ? muted : accent }]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
@@ -189,6 +263,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: spacing.sm,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  headerAction: {
+    paddingHorizontal: 6,
+    paddingVertical: 6,
   },
   filters: {
     flexDirection: 'row',

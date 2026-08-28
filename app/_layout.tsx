@@ -7,6 +7,7 @@ import { Platform, View, StyleSheet } from 'react-native';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { GradientBackground } from '@/components/GradientBackground';
 import { useThemeStore } from '@/store/themeStore';
+import { usePlayerStore } from '@/store/playerStore';
 import { logger } from '@/utils/logger';
 import { installGlobalErrorHandlers } from '@/utils/globalErrorHandlers';
 import { APP_VERSION, APP_PHASE } from '@/constants/app';
@@ -25,6 +26,12 @@ export default function RootLayout() {
   // Install global error handlers once
   useEffect(() => {
     installGlobalErrorHandlers();
+  }, []);
+
+  // Wire the audio service to the player store once at app boot
+  useEffect(() => {
+    const dispose = usePlayerStore.getState().init();
+    return () => dispose();
   }, []);
 
   // Apply web-only global styles (Oswald font import, etc.)
