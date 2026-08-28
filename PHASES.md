@@ -4,56 +4,68 @@
 
 **Project:** Personal music app for two people
 **Repo:** https://github.com/junior0629/music.git
-**Last updated:** 2026-08-28 (Phase 2 wrapping, Phase 3 unblocked)
+**Last updated:** 2026-08-28 (Phase 2 complete, Phase 3 unblocked)
 
 ---
 
-## Current status
+## At a glance
 
-✅ **Phase 2 — Real search + real playback via YouTube (complete)**
-- ✅ YouTube Data API v3 key obtained + stored in `.env.local` (gitignored)
-- ✅ `YouTubeProvider`: search via `/search?type=video&videoCategoryId=10`, batched metadata fetch via `/videos?part=contentDetails,status`
-- ✅ Filters out `status.embeddable === false` videos (owner-restricted)
-- ✅ `YouTubeIFrameAudioService` (web) + `expo-audio` fallback (native)
-- ✅ IFrame container is 480×270 with `transform: translateY(120%)` to satisfy Chrome's autoplay visibility check
-- ✅ Buffering watchdog (8s) surfaces "stuck buffering" error
-- ✅ Auto-continue after first user gesture; destroy-guard for torn-down players
-- ✅ **Lyrics integration** via LRClib: `/api/get` direct lookup, `/api/search` fallback for re-uploaded tracks, scored match (title similarity + artist token hit + duration penalty)
-- ✅ **Smooth-scroll lyric view** (reanimated withTiming, Apple Music-style vertical slide)
-- ✅ **Tap-to-seek on lyric lines** + **drag-to-seek on progress bar** (GestureDetector / Pan worklet)
-- ✅ **Pre-vocal period** (no highlighted line before the first LRC timestamp) — fixes "lyrics show before singer starts"
-- ✅ **Mini-player play/pause button** + isPlaying state desync fix (IFrame now reports PLAYING/PAUSED back to the store via `onPlayingChange`)
-- ✅ NowPlaying screen: spinning circular art on the left, lyrics on the right, blurred album-art background, white transport controls, heart icon above seek bar
-- ✅ Typecheck clean
-- ⚠️ Chrome: works only with no YouTube-blocking extensions. Edge recommended.
-- 🟡 Phase 3 next: SQLite for playlists, favorites, history
+| # | Phase | Status |
+|---|---|---|
+| 0 | Planning & setup | ✅ Complete |
+| 1 | App shell + glass UI primitives | ✅ Complete |
+| 2 | Real search + real playback + lyrics | ✅ Complete |
+| 3 | SQLite: playlists, favorites, history | 🟡 Ready |
+| 4 | Downloads + local music import | 🔒 Locked |
+| 5 | Partner features, stats, extras | 🔒 Locked |
 
-✅ **Phase 1 — App shell + glass UI primitives (complete)**
-- ✅ Expo 51 + TypeScript + Expo Router 3, full folder structure
-- ✅ Design tokens: colors (dark/light), radii, spacing, typography (Oswald), shadows
-- ✅ Logger (4 levels, context, ring buffer, subscribers, measure())
-- ✅ Global ErrorBoundary with glass-styled fallback
-- ✅ DevLogPanel — inline in Settings, filterable, copyable
-- ✅ Service abstractions: storage, player, music
-- ✅ Three Zustand stores: theme (persisted), player, library
-- ✅ Glass UI primitives: GlassCard, GlassPanel, GradientBackground, FloatingNav, MiniPlayer
-- ✅ 4 tab screens with mock data: Home, Search, Library, Settings
-- ✅ Animations: reanimated FadeInDown/Layout, mini-player slide-up
+Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting on prior phase) · ⚠️ Blocked
+
+**Next up is Phase 3:** persistent favorites (survive restart), playlists, recently-played history.
 
 ---
 
-## Phase overview
+## What's in each completed phase
+
+### ✅ Phase 2 — Real search + real playback via YouTube
+- YouTube Data API v3 key in `.env.local` (gitignored)
+- `YouTubeProvider`: `/search?type=video&videoCategoryId=10` + batched `/videos?part=contentDetails,status`
+- Filters out `status.embeddable === false` (owner-restricted) videos
+- `YouTubeIFrameAudioService` (web) + `expo-audio` fallback (native)
+- IFrame container 480×270 with `transform: translateY(120%)` for Chrome's autoplay visibility check
+- Buffering watchdog (8s) → "stuck buffering" error
+- Auto-continue after first user gesture; destroy-guard for torn-down players
+- **Lyrics** via LRClib: `/api/get` direct lookup, `/api/search` fallback for re-uploaded tracks, scored match
+- **Tap-to-seek on lyric lines** + **drag-to-seek on progress bar** (GestureDetector / Pan worklet)
+- **Pre-vocal period** (no highlighted line before the first LRC timestamp)
+- **Mini-player play/pause button** + isPlaying state desync fix (IFrame → store via `onPlayingChange`)
+- NowPlaying: spinning circular art on the left, 3-row lyric view (prev / active / next) on the right, blurred album-art background
+- ⚠️ Chrome: blocked by YouTube-blocking extensions. Edge works. Phase 4 native build avoids this entirely.
+
+### ✅ Phase 1 — App shell + glass UI primitives
+- Expo 51 + TypeScript + Expo Router 3, full folder structure
+- Design tokens: colors (dark/light), radii, spacing, typography (Oswald), shadows
+- Logger (4 levels, context, ring buffer, subscribers, `measure()`)
+- Global `ErrorBoundary` with glass-styled fallback
+- `DevLogPanel` — inline in Settings, filterable, copyable
+- Service abstractions: `storage`, `player`, `music`
+- Three Zustand stores: `theme` (persisted), `player`, `library`
+- Glass UI primitives: `GlassCard`, `GlassPanel`, `GradientBackground`, `FloatingNav`, `MiniPlayer`
+- 4 tab screens with mock data: Home, Search, Library, Settings
+- Animations: reanimated `FadeInDown` / `Layout`, mini-player slide-up
+
+---
+
+## Detailed phase log
 
 | # | Phase | Status | Started | Completed | Notes |
 |---|---|---|---|---|---|
 | 0 | Planning & setup | ✅ Complete | 2026-08-27 | 2026-08-27 | Stack, design, structure decided |
 | 1 | App shell + glass UI primitives | ✅ Complete | 2026-08-27 | 2026-08-27 | Web build OK, typecheck clean |
-| 2 | **Real search + real playback** | ✅ Complete | 2026-08-27 | 2026-08-28 | YouTube Data API v3 + IFrame Player. Lyrics via LRClib. Edge verified. |
-| 3 | SQLite: playlists, favorites, history | 🟡 Ready to start | — | — | Next up. Depends on Phase 2. |
-| 4 | Downloads + local music import | 🔒 Locked | — | — | May require EAS dev build |
+| 2 | Real search + real playback | ✅ Complete | 2026-08-27 | 2026-08-28 | YouTube Data API v3 + IFrame Player. Lyrics via LRClib. Edge verified. |
+| 3 | SQLite: playlists, favorites, history | 🟡 Ready | — | — | Next up. Depends on Phase 2. |
+| 4 | Downloads + local music import | 🔒 Locked | — | — | Requires EAS dev build |
 | 5 | Partner features, stats, extras | 🔒 Locked | — | — | Final polish |
-
-Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting on prior phase) · ⚠️ Blocked
 
 ---
 
