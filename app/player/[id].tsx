@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,7 +18,6 @@ import {
   GestureDetector,
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
-import { BlurView } from 'expo-blur';
 import { useColors, spacing, radii, fontFamily } from '@/theme';
 import { usePlayerStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
@@ -155,11 +154,18 @@ export default function NowPlayingScreen() {
   const isBuffering = usePlayerStore((s) => s.isBuffering);
   const lastError = usePlayerStore((s) => s.lastError);
 
-  const isFavorite = useLibraryStore((s) => s.isFavorite);
+  // Subscribe to the favorites array (not the isFavorite function reference),
+  // so the component re-renders when favorites change. The earlier version
+  // subscribed to `s.isFavorite` which is a stable function reference and
+  // never changes — the heart stayed empty even after toggling.
+  const favorites = useLibraryStore((s) => s.favorites);
   const toggleFavorite = useLibraryStore((s) => s.toggleFavorite);
 
   const [lyrics, setLyrics] = useState<LyricsResult>({ kind: 'none' });
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  // Bumping this counter re-runs the lyrics fetch effect — used by
+  // the RETRY button when the service returned `unavailable`.
+  const [lyricsRetryNonce, setLyricsRetryNonce] = useState(0);
 
   useEffect(() => {
     logger.setContext('NowPlayingScreen');
@@ -188,6 +194,11 @@ export default function NowPlayingScreen() {
   const track = currentTrack;
   const displayDuration = track?.durationSec ?? duration ?? 0;
 
+  const retryLyrics = useCallback(() => {
+    logger.info('Lyrics: user tapped RETRY', { trackId: track?.id });
+    setLyricsRetryNonce((n) => n + 1);
+  }, [track?.id]);
+
   // Real width of the seek bar's Pressable. Measured on layout. We use
   // this instead of `window.innerWidth` for the seek math because the
   // bar is inset from the screen edge by `paddingHorizontal: spacing.lg`
@@ -209,10 +220,28 @@ export default function NowPlayingScreen() {
     const ac = new AbortController();
     setLyricsLoading(true);
     setLyrics({ kind: 'none' });
+    // Surface the first try as a silent log so the dev log shows
+    // the chain of attempts without spamming WARN each time.
+    logger.info('Lyrics: fetch start', { trackId: track.id });
+    let autoRetryTimer: ReturnType<typeof setTimeout> | null = null;
     lyricsService
       .getLyrics(track, ac.signal)
       .then((r) => {
-        if (!ac.signal.aborted) setLyrics(r);
+        if (ac.signal.aborted) return;
+        setLyrics(r);
+        // If the service returned `unavailable` (5xx / network), try
+        // once more after 8s. Cloudflare POPs are often transient —
+        // a second try usually hits a different POP and succeeds.
+        // If still unavailable, the "Lyrics service unreachable"
+        // message + RETRY button shows as before.
+        if (r.kind === 'unavailable') {
+          logger.info('Lyrics: auto-retry in 8s', { trackId: track.id });
+          autoRetryTimer = setTimeout(() => {
+            if (ac.signal.aborted) return;
+            logger.info('Lyrics: auto-retry firing', { trackId: track.id });
+            setLyricsRetryNonce((n) => n + 1);
+          }, 8000);
+        }
       })
       .catch(() => {
         if (!ac.signal.aborted) setLyrics({ kind: 'none' });
@@ -220,8 +249,11 @@ export default function NowPlayingScreen() {
       .finally(() => {
         if (!ac.signal.aborted) setLyricsLoading(false);
       });
-    return () => ac.abort();
-  }, [track?.id]);
+    return () => {
+      ac.abort();
+      if (autoRetryTimer) clearTimeout(autoRetryTimer);
+    };
+  }, [track?.id, lyricsRetryNonce]);
 
   // Active lyric line: synced → by timestamp with a tiny lookahead so
   // the line is highlighted right as the singer starts (the lookahead
@@ -288,7 +320,7 @@ export default function NowPlayingScreen() {
     void seek(startSec);
   };
 
-  const favorited = track ? isFavorite(track.id) : false;
+  const favorited = track ? favorites.some((t) => t.id === track.id) : false;
   const artUri = track?.thumbnail ?? PLACEHOLDER_THUMB;
 
   // Draggable seek: tap or drag anywhere on the bar to seek. The
@@ -331,15 +363,22 @@ export default function NowPlayingScreen() {
         </>
       ) : (
         <>
+          {/* Native background. We use a single full-screen Image
+              with `blurRadius` for the blur, plus a dark scrim
+              View on top. The previous BlurView-based approach
+              tinted the foreground content (text + play button)
+              with the artwork's warm color, because expo-blur's
+              native surface sometimes draws above the React
+              content view. A plain View with a dark background
+              is rock-solid — no risk of bleeding into the
+              content layer. */}
           <Image
             source={{ uri: artUri }}
             style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
             blurRadius={40}
           />
-          <BlurView
-            intensity={70}
-            tint="dark"
-            style={StyleSheet.absoluteFill}
+          <View
+            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.55)' }]}
             pointerEvents="none"
           />
         </>
@@ -359,33 +398,23 @@ export default function NowPlayingScreen() {
         {/* Middle: artwork on the left, lyrics on the right */}
         <View style={styles.middle}>
           <View style={styles.artColumn}>
-            <Animated.View
-              style={[
-                styles.artDisc,
-                artSpinStyle,
-                // The artwork is the disc's CSS background. The
-                // thumbnail's natural aspect ratio varies (16:9,
-                // 4:3, 1:1, or even portrait), AND the photo's
-                // content often has dark areas around the
-                // subject. If we use background-size:cover, the
-                // photo preserves aspect ratio but exposes those
-                // dark areas (the photo's own dark sides) inside
-                // the disc circle, which looks like a "black
-                // gap". Instead, we stretch the image to 100% in
-                // both dimensions so the entire disc circle is
-                // filled with photo content. The image is
-                // slightly squished/stretched but the disc looks
-                // clean and full.
-                artUri
-                  ? ({
-                      backgroundImage: `url("${artUri}")`,
-                      backgroundSize: '100% 100%',
-                      backgroundPosition: 'center',
-                      backgroundRepeat: 'no-repeat',
-                    } as any)
-                  : null,
-              ]}
-            >
+            <Animated.View style={[styles.artDisc, artSpinStyle]}>
+              {/* Artwork image. YouTube thumbnails have a dark border
+                  around the subject; if we display them at 100% the
+                  dark border shows inside the round disc. So we
+                  scale the image 1.15x and center it — the disc's
+                  `overflow:hidden` clips the dark border outside
+                  the circle, and `resizeMode:cover` keeps the photo
+                  aspect ratio correct. This matches what worked on
+                  web (the previous CSS backgroundImage+scale 1.2
+                  hack), but using native primitives. */}
+              {artUri ? (
+                <Image
+                  source={{ uri: artUri }}
+                  style={styles.artImage}
+                  resizeMode="cover"
+                />
+              ) : null}
               {/* Center spindle hole — the small dark circle at the
                   center of a vinyl record / CD */}
               <View style={styles.artSpindle} />
@@ -401,6 +430,23 @@ export default function NowPlayingScreen() {
           <View style={styles.lyricsColumn}>
             {lyrics.kind === 'instrumental' ? (
               <Text style={[styles.lyricText, styles.lyricTextActive]}>♪ Instrumental</Text>
+            ) : lyrics.kind === 'unavailable' ? (
+              <View style={{ alignItems: 'center' }}>
+                <Text style={[styles.lyricText, styles.lyricTextFuture]}>
+                  Lyrics service unreachable
+                </Text>
+                <Pressable
+                  onPress={retryLyrics}
+                  hitSlop={10}
+                  accessibilityLabel="Retry lyrics"
+                  style={({ pressed }) => [
+                    styles.lyricRetry,
+                    { opacity: pressed ? 0.6 : 1 },
+                  ]}
+                >
+                  <Text style={[styles.lyricText, styles.lyricRetryLabel]}>RETRY</Text>
+                </Pressable>
+              </View>
             ) : lyrics.kind === 'none' && lyricsLoading ? (
               <Text style={[styles.lyricText, styles.lyricTextFuture]}>…</Text>
             ) : lyrics.kind === 'none' ? (
@@ -535,20 +581,26 @@ export default function NowPlayingScreen() {
             <Text style={[styles.iconText, { color: TEXT_PRIMARY, fontSize: 28 }]}>⏮</Text>
           </Pressable>
 
-          <Pressable
-            onPress={() => togglePlay()}
-            hitSlop={8}
-            disabled={!track}
-            accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
-            style={({ pressed }) => [
-              styles.playButton,
-              { opacity: pressed ? 0.85 : 1 },
-            ]}
-          >
-            <Text style={styles.playGlyph}>
-              {isBuffering ? '◌' : isPlaying ? '⏸' : '▶'}
-            </Text>
-          </Pressable>
+          {/* Play button. We wrap a View (with the visible white
+              disc + shadow) and a Pressable (touch only) so the
+              backgroundColor is unambiguously opaque, regardless
+              of any Pressable/Android-specific tint behavior. */}
+          <View style={styles.playButton}>
+            <Pressable
+              onPress={() => togglePlay()}
+              hitSlop={8}
+              disabled={!track}
+              accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+              style={({ pressed }) => [
+                styles.playButtonPressable,
+                { opacity: pressed ? 0.85 : 1 },
+              ]}
+            >
+              <Text style={styles.playGlyph}>
+                {isBuffering ? '◌' : isPlaying ? '⏸' : '▶'}
+              </Text>
+            </Pressable>
+          </View>
 
           <Pressable
             onPress={next}
@@ -595,6 +647,11 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: spacing.lg,
+    // Transparent foreground over the blurred artwork. The
+    // foreground must NOT receive any tint from the underlying
+    // BlurView/image layers (which pull the artwork's warm color).
+    // This explicit transparent background guarantees z-order
+    // without affecting the visual.
   },
 
   // Header
@@ -641,7 +698,22 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: 90,
     overflow: 'hidden',
-    backgroundColor: '#000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    // The disc background is neutral dark grey, not pure black. If
+    // the image fails to load (slow network, broken URL, etc.) the
+    // disc shows a dark spot — clearly "not loaded" but not the
+    // harsh #000 that looks like a screen error.
+    backgroundColor: '#1a1a1a',
+  },
+  artImage: {
+    // 15% larger than the disc (207x207 in a 180x180 circle) and
+    // centered. The disc's `overflow:hidden` clips the dark borders
+    // of the YouTube thumbnail. Width/height set explicitly so the
+    // cover resize mode computes against this larger box, not the
+    // disc's actual size.
+    width: 207,
+    height: 207,
   },
   artSpindle: {
     position: 'absolute',
@@ -707,6 +779,20 @@ const styles = StyleSheet.create({
     fontFamily: fontFamily.oswald,
     letterSpacing: 0.3,
     flexShrink: 1,
+  },
+  lyricRetry: {
+    marginTop: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: TEXT_SECONDARY,
+  },
+  lyricRetryLabel: {
+    color: TEXT_PRIMARY,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.5,
   },
   lyricTextActive: {
     color: TEXT_PRIMARY,
@@ -790,17 +876,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   playButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    // Pure flat white. The button is a static View (not a Pressable),
+    // and is wrapped in a Pressable that handles only touch events
+    // (no backgroundColor, no styling that could change). The double
+    // border (outer 4px black + inner ring) makes the disc shape
+    // unmistakable on any background.
+    backgroundColor: '#FFFFFF',
+    borderWidth: 4,
+    borderColor: '#000000',
+    // Soft white inner ring just inside the border — visually
+    // separates the disc from the black border, kills any chance of
+    // anti-aliasing bleed that could read as a warm color.
+    // (Implemented via shadow on the inner Pressable: see below.)
+    shadowColor: '#000000',
+    shadowOpacity: 0.7,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  playButtonPressable: {
+    width: '100%',
+    height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: TEXT_PRIMARY,
+    // Force transparent so no Android Pressable state can paint over
+    // the white disc. The white comes from the wrapping View above.
+    backgroundColor: 'transparent',
   },
   playGlyph: {
-    color: '#0A0A14',
-    fontSize: 30,
-    fontWeight: '800',
+    color: '#000000',
+    fontSize: 32,
+    fontWeight: '900',
+    // No font-family here — system font for max cross-device consistency.
   },
   iconText: {
     fontWeight: '700',

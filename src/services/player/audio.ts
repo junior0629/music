@@ -5,9 +5,12 @@
  *   loaded as an iframe, controlled via postMessage. Handles
  *   streaming, seeking, volume, end-of-track events for free.
  *
- * Native: expo-audio (fallback for when IFrame isn't available).
- *   Will only be used in practice if the IFrame also can't be
- *   shown (background playback, etc. — Phase 4 territory).
+ * Native: Phase 4 — no real native player yet. For now we return
+ *   a NoopAudioService so the app boots cleanly. The IFrame path
+ *   can't run on Android (no DOM, no WebView with YouTube embed
+ *   permissions). Phase 4 will add a working native player
+ *   (expo-audio or react-native-track-player) and the queue will
+ *   drive the UI the same way it does on web.
  *
  * Both implementations expose the same AudioService interface, so
  * the player store doesn't care which runtime it's on.
@@ -443,139 +446,18 @@ function ytErrorMessage(code: number): string {
 }
 
 // ============================================================
-// Native implementation: expo-audio
+// Native implementation: placeholder until Phase 4
 // ============================================================
+//
+// The YouTube IFrame Player can't run on Android (no DOM, and
+// YouTube blocks embeds in WebViews without proper origin
+// cookies). Phase 4 will add a real native player here. For now
+// we log once and return the noop so the app at least boots and
+// shows its UI on a real device.
 
 async function createNativeAudioService(): Promise<AudioService> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const expoAudio = require('expo-audio') as typeof import('expo-audio');
-  return new NativeAudioService(expoAudio.createAudioPlayer);
-}
-
-class NativeAudioService implements AudioService {
-  private player: any | null = null;
-  private currentTrack: Track | null = null;
-  private currentStream: StreamInfo | null = null;
-  private positionListeners = new Set<(p: number) => void>();
-  private endedListeners = new Set<() => void>();
-  private errorListeners = new Set<(m: string) => void>();
-  private bufferingListeners = new Set<(b: boolean) => void>();
-  private playingListeners = new Set<(p: boolean) => void>();
-  private positionPollHandle: ReturnType<typeof setInterval> | null = null;
-  private createPlayer: any;
-
-  constructor(createPlayer: any) {
-    this.createPlayer = createPlayer;
-  }
-
-  async load(track: Track, stream: StreamInfo): Promise<void> {
-    this.currentTrack = track;
-    this.currentStream = stream;
-    if (this.player) {
-      try { this.player.pause(); } catch {}
-    }
-    this.player = this.createPlayer({ uri: stream.url });
-    this.wirePlayerEvents(this.player);
-  }
-
-  async play(): Promise<void> {
-    if (!this.player) return;
-    this.player.play();
-    this.startPositionPolling();
-  }
-
-  async pause(): Promise<void> {
-    if (!this.player) return;
-    this.player.pause();
-    this.stopPositionPolling();
-  }
-
-  async unload(): Promise<void> {
-    if (this.player) {
-      try { this.player.pause(); } catch {}
-      try { this.player.release(); } catch {}
-      this.player = null;
-    }
-    this.stopPositionPolling();
-    this.currentTrack = null;
-    this.currentStream = null;
-  }
-
-  async seek(positionSec: number): Promise<void> {
-    if (!this.player) return;
-    try {
-      this.player.seekTo(Math.max(0, positionSec));
-    } catch (err) {
-      logger.warn('audio.seek failed', { err: String(err) });
-    }
-  }
-
-  async setVolume(volume: number): Promise<void> {
-    if (!this.player) return;
-    try {
-      this.player.volume = Math.max(0, Math.min(1, volume));
-    } catch {}
-  }
-
-  onPosition(listener: (positionSec: number) => void): () => void {
-    this.positionListeners.add(listener);
-    return () => this.positionListeners.delete(listener);
-  }
-
-  onEnded(listener: () => void): () => void {
-    this.endedListeners.add(listener);
-    return () => this.endedListeners.delete(listener);
-  }
-
-  onError(listener: (message: string) => void): () => void {
-    this.errorListeners.add(listener);
-    return () => this.errorListeners.delete(listener);
-  }
-
-  onBuffering(listener: (isBuffering: boolean) => void): () => void {
-    this.bufferingListeners.add(listener);
-    return () => this.bufferingListeners.delete(listener);
-  }
-
-  onPlayingChange(listener: (isPlaying: boolean) => void): () => void {
-    this.playingListeners.add(listener);
-    return () => this.playingListeners.delete(listener);
-  }
-
-  private wirePlayerEvents(p: any): void {
-    if (typeof p.addListener === 'function') {
-      try {
-        p.addListener('playbackStatusUpdate', (status: any) => {
-          if (status?.didJustFinish) {
-            this.stopPositionPolling();
-            this.endedListeners.forEach((l) => l());
-          }
-          if (status?.isLoaded === false && status?.error) {
-            this.errorListeners.forEach((l) => l(String(status.error)));
-          }
-        });
-      } catch {}
-    }
-  }
-
-  private startPositionPolling(): void {
-    this.stopPositionPolling();
-    this.positionPollHandle = setInterval(() => {
-      if (this.player?.currentTime != null) {
-        const t = typeof this.player.currentTime === 'function'
-          ? this.player.currentTime()
-          : this.player.currentTime;
-        this.positionListeners.forEach((l) => l(t));
-      }
-    }, 250);
-  }
-
-  private stopPositionPolling(): void {
-    if (this.positionPollHandle) {
-      clearInterval(this.positionPollHandle);
-      this.positionPollHandle = null;
-    }
-  }
+  logger.warn('Native audio is a noop until Phase 4 lands. UI will load, but no sound.');
+  return new NoopAudioService();
 }
 
 // ============================================================
@@ -583,41 +465,155 @@ class NativeAudioService implements AudioService {
 // ============================================================
 
 class NoopAudioService implements AudioService {
-  async load(): Promise<void> {}
-  async play(): Promise<void> {}
-  async pause(): Promise<void> {}
-  async unload(): Promise<void> {}
-  async seek(): Promise<void> {}
+  private positionTimer: ReturnType<typeof setInterval> | null = null;
+  private virtualPosition = 0;
+  private virtualDuration = 0; // set on load
+  private positionListeners = new Set<(p: number) => void>();
+  private endedListeners = new Set<() => void>();
+  private playingListeners = new Set<(p: boolean) => void>();
+  private playing = false;
+
+  async load(track: Track, _stream: StreamInfo): Promise<void> {
+    // Remember the track's real duration so the ticker knows when to "end"
+    this.virtualDuration = track.durationSec > 0 ? track.durationSec : 180;
+    this.virtualPosition = 0;
+    this.emitPosition();
+  }
+
+  async play(): Promise<void> {
+    if (this.playing) return;
+    this.playing = true;
+    this.playingListeners.forEach((l) => l(true));
+    // If we'd already "finished", restart from 0
+    if (this.virtualPosition >= this.virtualDuration) {
+      this.virtualPosition = 0;
+      this.emitPosition();
+    }
+    if (this.positionTimer) clearInterval(this.positionTimer);
+    this.positionTimer = setInterval(() => this.tick(), 1000);
+  }
+
+  async pause(): Promise<void> {
+    if (!this.playing) return;
+    this.playing = false;
+    this.playingListeners.forEach((l) => l(false));
+    if (this.positionTimer) {
+      clearInterval(this.positionTimer);
+      this.positionTimer = null;
+    }
+  }
+
+  async unload(): Promise<void> {
+    if (this.positionTimer) {
+      clearInterval(this.positionTimer);
+      this.positionTimer = null;
+    }
+    this.playing = false;
+    this.virtualPosition = 0;
+    this.virtualDuration = 0;
+  }
+
+  async seek(positionSec: number): Promise<void> {
+    this.virtualPosition = Math.max(0, Math.min(positionSec, this.virtualDuration));
+    this.emitPosition();
+  }
+
   async setVolume(): Promise<void> {}
-  onPosition(): () => void { return () => undefined; }
-  onEnded(): () => void { return () => undefined; }
+
+  private tick(): void {
+    if (this.virtualPosition >= this.virtualDuration) {
+      this.virtualPosition = this.virtualDuration;
+      this.emitPosition();
+      this.endedListeners.forEach((l) => l());
+      this.playing = false;
+      this.playingListeners.forEach((l) => l(false));
+      if (this.positionTimer) {
+        clearInterval(this.positionTimer);
+        this.positionTimer = null;
+      }
+      return;
+    }
+    this.virtualPosition += 1;
+    this.emitPosition();
+  }
+
+  private emitPosition(): void {
+    this.positionListeners.forEach((l) => l(this.virtualPosition));
+  }
+
+  onPosition(listener: (p: number) => void): () => void {
+    this.positionListeners.add(listener);
+    // Replay the current value so the store immediately knows
+    // where the "playhead" is when it subscribes.
+    listener(this.virtualPosition);
+    return () => {
+      this.positionListeners.delete(listener);
+    };
+  }
+  onEnded(listener: () => void): () => void {
+    this.endedListeners.add(listener);
+    return () => {
+      this.endedListeners.delete(listener);
+    };
+  }
   onError(): () => void { return () => undefined; }
   onBuffering(): () => void { return () => undefined; }
-  onPlayingChange(): () => void { return () => undefined; }
+  onPlayingChange(listener: (p: boolean) => void): () => void {
+    this.playingListeners.add(listener);
+    listener(this.playing);
+    return () => {
+      this.playingListeners.delete(listener);
+    };
+  }
 }
 
 let _instance: AudioService | null = null;
 let _initPromise: Promise<AudioService> | null = null;
 
+/**
+ * Synchronous accessor: always returns the same instance, even before
+ * the async init has resolved. On web the IFrame service is constructed
+ * synchronously, so the placeholder is replaced immediately. On native
+ * the placeholder is a NoopAudioService that drives position/playstate
+ * listeners — meaning `init()` in the player store can subscribe to it
+ * up front and the listeners will fire when the real service (or the
+ * noop, if native) starts emitting events on the *same* instance.
+ *
+ * The previous version returned a fresh NoopAudioService on each call
+ * while init was in flight, so subscriptions and event emissions ended
+ * up on different instances — silent failure.
+ */
 export function getAudio(): AudioService {
   if (_instance) return _instance;
   if (!_initPromise) {
-    _initPromise = (async () => {
-      if (isWeb) {
-        _instance = new YouTubeIFrameAudioService();
-      } else {
+    if (isWeb) {
+      // Web: IFrame service is sync-constructible. Use it directly.
+      _instance = new YouTubeIFrameAudioService();
+    } else {
+      // Native: build a stable noop placeholder immediately so any
+      // early subscribe() lands on the same object the async init
+      // will end up replacing _instance with. The async init then
+      // mutates _instance; existing subscribers don't need to
+      // re-subscribe because the placeholder IS a noop (and on
+      // native, the real service is also a noop for now).
+      _instance = new NoopAudioService();
+      _initPromise = (async () => {
         try {
-          _instance = await createNativeAudioService();
+          const real = await createNativeAudioService();
+          // NOTE: If `real` is a real (non-noop) player, subscribers
+          // on the placeholder above won't see its events. This will
+          // matter when Phase 4 swaps in a real native audio service.
+          // For now, `createNativeAudioService` returns a noop too,
+          // so the swap is safe.
+          _instance = real;
         } catch (err) {
-          logger.error('Failed to init native audio, falling back to noop', { err: String(err) });
-          _instance = new NoopAudioService();
+          logger.error('Failed to init native audio, using noop', { err: String(err) });
         }
-      }
-      return _instance!;
-    })();
-    return new NoopAudioService();
+        return _instance!;
+      })();
+    }
   }
-  return new NoopAudioService();
+  return _instance!;
 }
 
 export const audio: AudioService = new Proxy({} as AudioService, {

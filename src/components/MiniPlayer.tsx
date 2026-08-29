@@ -176,10 +176,17 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    // Pure flat white. The wrapping mini-player is glass, so the
+    // button must be solid white to read as a separate, opaque
+    // disc — not a translucent surface. Solid black border so the
+    // shape stays clean on any background.
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: '#000000',
   },
   playPauseGlyph: {
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: '900',
+    color: '#000000',
   },
 });
