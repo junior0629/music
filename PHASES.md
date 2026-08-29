@@ -4,7 +4,7 @@
 
 **Project:** Personal music app for two people
 **Repo:** https://github.com/junior0629/music.git
-**Last updated:** 2026-08-29 (Phase 2 complete; native APK build done; native audio is a noop; Phase 3 unblocked)
+**Last updated:** 2026-08-29 (Phase 2 complete + native APK fixes shipped; Phase 3 unblocked)
 
 ---
 
@@ -63,6 +63,14 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - **`expo-audio` removed.** The package version available on npm (`^57.x`) targets Expo SDK 57, not our SDK 51 — Gradle build failed with peer-dep mismatch. Removed from `package.json` and `app.json` plugins.
 - **Native audio is a NoopAudioService for now.** The YouTube IFrame Player can't run on Android (no DOM, blocked in WebViews), and `expo-audio` isn't viable. Phase 4 will add a real native player (e.g. `react-native-track-player` or a corrected `expo-audio` for SDK 51). App boots, search/lyrics/UI/mini-player all work; **tapping play does nothing audibly**. DevLogPanel shows the noop warning.
 - **`.claude/agents/mobile-developer.md`** installed (project-scoped, gitignored) for future Phase 4 native work.
+- **`.claude/memory/mobile-first-rule.md`** recorded: the phone is the source of truth, not Chrome. Several Phase 2 bugs were invisible in web preview and only showed up after the APK install (see "Phone-only bug fixes" below).
+
+### ✅ Phone-only bug fixes (2026-08-29, post-2 APK rollout)
+Three bugs that didn't show up in Edge/Chrome preview surfaced after the first APK install on the Redmi Note 9 Pro. All three fixed in commit `7ea6508`:
+- **Audio instance race in `getAudio()`** — while the async init was in flight, every call returned a *fresh* `NoopAudioService`. The store subscribed to position events on instance A; `togglePlay` ended up calling `play()` on instance B via the proxy. Net effect: position never advanced, seek bar stayed empty, time text "0:00", lyrics couldn't track playback. Fix: `getAudio()` now returns the same instance on every call (sync placeholder for native, sync IFrame for web).
+- **Heart selector never re-rendered** — `NowPlaying` subscribed to `useLibraryStore(s => s.isFavorite)`. Function references never change, so the component never re-rendered when `favorites` changed. The heart stayed `false` (outline) forever, even though `toggleFavorite` did add the track. Fix: subscribe to `s.favorites` and recompute `favorited` locally.
+- **Play button "orange"** — code had `backgroundColor: '#FFFFFF'`, but the inner `Pressable` had no explicit `backgroundColor`, so Android Pressable state could in principle paint over the disc. Forced `backgroundColor: 'transparent'` on the inner Pressable, switched the glyph to pure `#000000` at weight 900 / size 32, and gave the same treatment to the mini-player button. **If the user still reports orange on the next APK install, the cause is something not in the source (Android system theme, stale install, accessibility overlay) and a screenshot is the next move.**
+- **Phone-first testing rule saved here:** don't trust "works in Chrome" as proof anything works on Android. Test on the phone.
 
 ---
 
@@ -74,6 +82,7 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 | 1 | App shell + glass UI primitives | ✅ Complete | 2026-08-27 | 2026-08-27 | Web build OK, typecheck clean |
 | 2 | Real search + real playback | ✅ Complete | 2026-08-27 | 2026-08-28 | YouTube Data API v3 + IFrame Player. Lyrics via LRClib. Edge verified. |
 | 2b | Native APK build (pre-phase 3) | ✅ Complete | 2026-08-29 | 2026-08-29 | `expo prebuild` + arm64-v8a debug APK (49 MB). Native audio is a NoopAudioService until Phase 4. |
+| 2c | Phone-only bug fixes | ✅ Complete | 2026-08-29 | 2026-08-29 | After APK install: audio instance race, heart selector, play button. All in `7ea6508`. |
 | 3 | SQLite: playlists, favorites, history | 🟡 Ready | — | — | Next up. Depends on Phase 2. |
 | 4 | Downloads + local music import | 🔒 Locked | — | — | Requires EAS dev build |
 | 5 | Partner features, stats, extras | 🔒 Locked | — | — | Final polish |
@@ -238,7 +247,8 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - [x] Pause/play, next, previous, seek (tap and drag) all work — verified
 - [x] Real-time synced lyrics (LRClib) display one line at a time with smooth scroll — verified
 - [x] App survives a real song start-to-finish without crashing — verified
-- ⚠️ Chrome: blocked by YouTube-blocking extensions (ad-blockers). Edge works. Phase 4 native build avoids this entirely.
+- [x] Native APK (Redmi Note 9 Pro) installs, search/UI/lyrics/timer/seek all behave (audio silent — see Phase 4) — verified 2026-08-29 after `7ea6508` phone-only bug fixes
+- ⚠️ Chrome: blocked by YouTube-blocking extensions (ad-blockers). Edge works. Native APK is now the primary target.
 
 ---
 
