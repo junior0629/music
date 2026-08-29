@@ -4,7 +4,7 @@
 
 **Project:** Personal music app for two people
 **Repo:** https://github.com/junior0629/music.git
-**Last updated:** 2026-08-28 (Phase 2 complete, Phase 3 unblocked)
+**Last updated:** 2026-08-29 (Phase 2 complete; native APK build done; native audio is a noop; Phase 3 unblocked)
 
 ---
 
@@ -28,10 +28,11 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 ## What's in each completed phase
 
 ### ✅ Phase 2 — Real search + real playback via YouTube
-- YouTube Data API v3 key in `.env.local` (gitignored)
+- YouTube Data API v3 key in `.env.local` (gitignored, only read via `EXPO_PUBLIC_YOUTUBE_API_KEY`)
 - `YouTubeProvider`: `/search?type=video&videoCategoryId=10` + batched `/videos?part=contentDetails,status`
 - Filters out `status.embeddable === false` (owner-restricted) videos
-- `YouTubeIFrameAudioService` (web) + `expo-audio` fallback (native)
+- In-memory TTL cache for search (50 entries, 1h) and getTrack (200 entries, 1h) — protects the YouTube API free-tier quota
+- `YouTubeIFrameAudioService` (web) + **NoopAudioService** on native (see "Native build & noop audio" below)
 - IFrame container 480×270 with `transform: translateY(120%)` for Chrome's autoplay visibility check
 - Buffering watchdog (8s) → "stuck buffering" error
 - Auto-continue after first user gesture; destroy-guard for torn-down players
@@ -40,7 +41,7 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - **Pre-vocal period** (no highlighted line before the first LRC timestamp)
 - **Mini-player play/pause button** + isPlaying state desync fix (IFrame → store via `onPlayingChange`)
 - NowPlaying: spinning circular art on the left, 3-row lyric view (prev / active / next) on the right, blurred album-art background
-- ⚠️ Chrome: blocked by YouTube-blocking extensions. Edge works. Phase 4 native build avoids this entirely.
+- ⚠️ Chrome: blocked by YouTube-blocking extensions. Edge works. **Now bypassed on phone** (native build, no Chrome).
 
 ### ✅ Phase 1 — App shell + glass UI primitives
 - Expo 51 + TypeScript + Expo Router 3, full folder structure
@@ -54,6 +55,15 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 - 4 tab screens with mock data: Home, Search, Library, Settings
 - Animations: reanimated `FadeInDown` / `Layout`, mini-player slide-up
 
+### ✅ Native build & noop audio (2026-08-29, between phases)
+- **Distribution decision:** APK is the deliverable, not Expo Go. `npx expo prebuild --platform android` generated `android/`. `apk:debug` and `apk:release` scripts in `package.json`.
+- **Toolchain:** Microsoft OpenJDK 17 (installed via `winget`), `ANDROID_HOME=C:\Users\User\AppData\Local\Android\Sdk`, Gradle 8.8 (wrapper). Java 26 is on the machine but rejected by Expo 51 / RN 0.74.
+- **Windows Defender exclusion required** for `android\.gradle`, `node_modules`, and `~/.gradle` to work around a Gradle 8.8 `dependencies-accessors` rename race on Windows. One-time admin PowerShell: `Add-MpPreference -ExclusionPath …`.
+- **APK is arm64-v8a only** (`reactNativeArchitectures=arm64-v8a` in `gradle.properties`, plus `ndk.abiFilters` in `app/build.gradle`). Cuts debug APK from 151 MB to 49 MB. Override with `-ParmArchs=x86_64,arm64-v8a` if an emulator or older device is needed.
+- **`expo-audio` removed.** The package version available on npm (`^57.x`) targets Expo SDK 57, not our SDK 51 — Gradle build failed with peer-dep mismatch. Removed from `package.json` and `app.json` plugins.
+- **Native audio is a NoopAudioService for now.** The YouTube IFrame Player can't run on Android (no DOM, blocked in WebViews), and `expo-audio` isn't viable. Phase 4 will add a real native player (e.g. `react-native-track-player` or a corrected `expo-audio` for SDK 51). App boots, search/lyrics/UI/mini-player all work; **tapping play does nothing audibly**. DevLogPanel shows the noop warning.
+- **`.claude/agents/mobile-developer.md`** installed (project-scoped, gitignored) for future Phase 4 native work.
+
 ---
 
 ## Detailed phase log
@@ -63,6 +73,7 @@ Legend: ⏳ Pending · 🟡 In progress · ✅ Complete · 🔒 Locked (waiting 
 | 0 | Planning & setup | ✅ Complete | 2026-08-27 | 2026-08-27 | Stack, design, structure decided |
 | 1 | App shell + glass UI primitives | ✅ Complete | 2026-08-27 | 2026-08-27 | Web build OK, typecheck clean |
 | 2 | Real search + real playback | ✅ Complete | 2026-08-27 | 2026-08-28 | YouTube Data API v3 + IFrame Player. Lyrics via LRClib. Edge verified. |
+| 2b | Native APK build (pre-phase 3) | ✅ Complete | 2026-08-29 | 2026-08-29 | `expo prebuild` + arm64-v8a debug APK (49 MB). Native audio is a NoopAudioService until Phase 4. |
 | 3 | SQLite: playlists, favorites, history | 🟡 Ready | — | — | Next up. Depends on Phase 2. |
 | 4 | Downloads + local music import | 🔒 Locked | — | — | Requires EAS dev build |
 | 5 | Partner features, stats, extras | 🔒 Locked | — | — | Final polish |
