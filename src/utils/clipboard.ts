@@ -28,6 +28,7 @@ export function formatLogEntries(
     level: string;
     source?: string;
     message: string;
+    context?: Record<string, unknown>;
     error?: { message?: string; stack?: string };
   }>,
 ): string {
@@ -40,6 +41,13 @@ export function formatLogEntries(
     const head = `[${t}] ${e.level.toUpperCase().padEnd(5)} ${e.source ?? 'app'}`;
     lines.push(head);
     lines.push(`  ${e.message}`);
+    if (e.context && Object.keys(e.context).length > 0) {
+      const ctxStr = JSON.stringify(e.context, null, 2)
+        .split('\n')
+        .map((l) => '    ' + l)
+        .join('\n');
+      lines.push(`  Context: ${ctxStr}`);
+    }
     if (e.error?.message) {
       lines.push(`  Error: ${e.error.message}`);
     }

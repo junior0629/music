@@ -1,8 +1,9 @@
 /**
  * DevLogSection — an inline dev log viewer embedded in the Settings tab.
  *
- * Dev-only (gated on __DEV__). In production builds this component
- * returns null and contributes no layout.
+ * Always shown — including in release APKs. The original __DEV__ gate
+ * hid the diagnostic panel exactly when a user running the shipping
+ * APK would need it most.
  *
  * Why a section, not a floating panel: a floating overlay gets in the
  * way of normal UI, fights for tap targets, and has to hardcode text
@@ -18,8 +19,6 @@ import { GlassCard } from './GlassCard';
 import { useColors, textStyle, spacing, radii } from '@/theme';
 import { logger, LogEntry, LogLevel } from '@/utils/logger';
 import { copyToClipboard, formatLogEntries } from '@/utils/clipboard';
-
-const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production';
 
 type LevelFilter = 'all' | LogLevel;
 
@@ -55,7 +54,6 @@ export function DevLogSection(): React.ReactElement | null {
   const [filter, setFilter] = useState<LevelFilter>('all');
 
   useEffect(() => {
-    if (!isDev) return;
     return logger.subscribe((next) => setEntries(next));
   }, []);
 
@@ -64,7 +62,10 @@ export function DevLogSection(): React.ReactElement | null {
     return entries.filter((e) => e.level === filter);
   }, [entries, filter]);
 
-  if (!isDev) return null;
+  // Note: the dev log is shown in both debug and release APKs. The
+  // gate used to be `__DEV__` (which is false in release builds), but
+  // that hid the diagnostic panel exactly when a user running the
+  // shipping APK would need it. Now it always renders.
 
   const errorCount = entries.filter((e) => e.level === 'error').length;
   const warnCount = entries.filter((e) => e.level === 'warn').length;
@@ -202,6 +203,19 @@ function LogRow({
   const colors = useColors();
   const ts = new Date(entry.ts).toISOString().split('T')[1]?.slice(0, 12) ?? '';
   const c = levelColors[entry.level];
+  // Compact the context into a single string so the inline view stays
+  // scannable. Skip noisy keys (we already show the error message below).
+  const ctxStr = entry.context && Object.keys(entry.context).length > 0
+    ? Object.entries(entry.context)
+        .filter(([k]) => k !== 'err' && k !== 'error')
+        .map(([k, v]) => {
+          if (v === null || v === undefined) return `${k}=`;
+          if (typeof v === 'string') return `${k}=${v}`;
+          if (typeof v === 'number' || typeof v === 'boolean') return `${k}=${v}`;
+          return `${k}=${JSON.stringify(v)}`;
+        })
+        .join(' · ')
+    : null;
   return (
     <View style={[styles.row, { borderBottomColor: colors.glassBorder }]}>
       <Text style={[styles.rowTime, { color: colors.textMuted }]}>{ts}</Text>
@@ -213,6 +227,9 @@ function LogRow({
           </Text>
         ) : null}
         <Text style={[styles.rowMsg, { color: colors.textPrimary }]}>{entry.message}</Text>
+        {ctxStr ? (
+          <Text style={[styles.rowCtx, { color: colors.textMuted }]}>{ctxStr}</Text>
+        ) : null}
         {entry.error?.message ? (
           <Text style={[styles.rowErr, { color: colors.danger }]}>
             {entry.error.message}
@@ -320,6 +337,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
     marginTop: 1,
+  },
+  rowCtx: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    marginTop: 2,
   },
   rowErr: {
     fontSize: 11,

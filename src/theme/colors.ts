@@ -109,15 +109,17 @@ export const lightPalette: Palette = {
   textMuted: 'rgba(30,15,60,0.50)',
   textInverse: '#FFFFFF',
 
-  // Slightly cooler-tinted glass for the light purple background.
-  // White glass on a purple base reads pinkish, so we bias toward
-  // a faintly cool white to keep it neutral.
-  glassSurface: 'rgba(255,255,255,0.45)',
-  glassSurfaceStrong: 'rgba(255,255,255,0.60)',
-  glassSurfaceSubtle: 'rgba(255,255,255,0.30)',
-  glassBorder: 'rgba(255,255,255,0.55)',
-  glassBorderStrong: 'rgba(255,255,255,0.75)',
-  glassHighlight: 'rgba(255,255,255,0.85)',
+  // Dark glass on the violet background — the cards are clearly
+  // DARKER than the page, like deep spots. No white tint anywhere.
+  // (Tried white tint at 0.45 / 0.62 / 0.75 / 0.30 — all read as
+  //  milky.  Dark fill at 0.55+ finally gives the cards a clear
+  //  "lift" against the violet-300 base.)
+  glassSurface: 'rgba(35, 15, 80, 0.55)',          // deep-violet wash, clearly darker than page
+  glassSurfaceStrong: 'rgba(35, 15, 80, 0.70)',    // strongest, for nav/mini-player
+  glassSurfaceSubtle: 'rgba(35, 15, 80, 0.30)',    // lighter, for hover/pressed
+  glassBorder: 'rgba(255, 255, 255, 0.22)',        // very faint white hairline
+  glassBorderStrong: 'rgba(255, 255, 255, 0.35)',
+  glassHighlight: 'rgba(255, 255, 255, 0.10)',     // top inner stroke — very subtle
 
   accent: '#6D28D9',     // violet-700, more saturated for legibility on light purple
   accentSoft: 'rgba(109,40,217,0.18)',

@@ -42,7 +42,12 @@ export type LyricsResult =
   | { kind: 'synced'; lines: LyricLine[] }
   | { kind: 'plain'; lines: LyricLine[] }
   | { kind: 'instrumental' }
-  | { kind: 'none' };
+  /** LRClib returned 404 / no record — the song just isn't in their DB. */
+  | { kind: 'none' }
+  /** LRClib's server is broken / unreachable (HTTP 5xx, timeout, etc.).
+   *  Distinct from `none` so the UI can show a retry rather than a
+   *  silent "Lyrics not available" message. */
+  | { kind: 'unavailable'; status?: number };
 
 interface LrclibResponse {
   id: number;
@@ -67,13 +72,19 @@ class LyricsService {
     async (track: Track, signal?: AbortSignal): Promise<LyricsResult> => {
       const key = track.id;
       const cached = this.cache.get(key);
-      if (cached) {
+      // Only return cache for definitive answers. A previous `unavailable`
+      // is treated as stale — the user just tapped RETRY, so we should
+      // actually try again instead of returning the cached failure.
+      if (cached && cached.kind !== 'unavailable') {
         logger.debug('LyricsService cache hit', { key });
         return cached;
       }
 
       const result = await this.fetch(track, signal);
-      this.cache.set(key, result);
+      // Don't cache `unavailable` — see comment above.
+      if (result.kind !== 'unavailable') {
+        this.cache.set(key, result);
+      }
       return result;
     },
   );
@@ -205,15 +216,21 @@ class LyricsService {
     const { res, networkError } = await this.httpGet(url, signal);
     if (networkError) {
       logger.warn('LyricsService: network error', { err: networkError, title: track.title });
-      return { kind: 'none' };
+      return { kind: 'unavailable' };
     }
     if (res.status === 404) {
       logger.info('LyricsService: get 404', { title: track.title, artist: track.artist });
       return { kind: 'none' };
     }
+    if (res.status >= 500) {
+      // LRClib's origin is broken. Distinguish from a clean 404 so the
+      // UI can offer a retry instead of a silent "not available".
+      logger.warn('LyricsService: server error', { status: res.status, title: track.title });
+      return { kind: 'unavailable', status: res.status };
+    }
     if (!res.ok) {
       logger.warn('LyricsService: HTTP error', { status: res.status, title: track.title });
-      return { kind: 'none' };
+      return { kind: 'unavailable', status: res.status };
     }
     let data: LrclibResponse;
     try {
@@ -233,6 +250,10 @@ class LyricsService {
     const { res, networkError } = await this.httpGet(url, signal);
     if (networkError) {
       logger.warn('LyricsService: search network error', { err: networkError, q: query });
+      return [];
+    }
+    if (res.status >= 500) {
+      logger.warn('LyricsService: search server error', { status: res.status });
       return [];
     }
     if (!res.ok) {
@@ -261,7 +282,17 @@ class LyricsService {
     try {
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { Accept: 'application/json' },
+        // Cloudflare's edge sometimes returns 520 to bare-okhttp UAs
+        // (React Native's default fetch ships okhttp/4.x). Sending a
+        // browser-like UA + Accept makes the request indistinguishable
+        // from a regular browser tab, which is what the lrclib.net
+        // homepage already accepts.
+        headers: {
+          Accept: 'application/json',
+          'User-Agent':
+            'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
+        },
       });
       return { res };
     } catch (err) {
