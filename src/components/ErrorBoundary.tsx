@@ -65,13 +65,13 @@ function ErrorFallback({
     .join('\n\n');
 
   return (
-    <View style={[styles.root, { backgroundColor: colors.bgBase }]}>
+    <View style={[styles.root, { backgroundColor: colors.bgPageSoft }]}>
       <View
         style={[
           styles.panel,
           {
-            backgroundColor: colors.glassSurface,
-            borderColor: colors.glassBorder,
+            backgroundColor: colors.surface,
+            borderColor: colors.border,
           },
           shadows.lg,
         ]}
@@ -91,8 +91,8 @@ function ErrorFallback({
           style={[
             styles.detailsBox,
             {
-              backgroundColor: colors.glassSurfaceSubtle,
-              borderColor: colors.glassBorder,
+              backgroundColor: colors.surfaceMuted,
+              borderColor: colors.border,
             },
           ]}
           contentContainerStyle={{ padding: spacing.md }}
@@ -112,15 +112,15 @@ function ErrorFallback({
           style={({ pressed }) => [
             styles.button,
             {
-              backgroundColor: colors.accentSoft,
-              borderColor: colors.glassBorderStrong,
+              backgroundColor: colors.lavenderSoft,
+              borderColor: colors.borderStrong,
               opacity: pressed ? 0.85 : 1,
             },
           ]}
           accessibilityLabel="Reload app"
           accessibilityRole="button"
         >
-          <Text style={[textStyle('heading'), { color: colors.accent }]}>Reload</Text>
+          <Text style={[textStyle('heading'), { color: colors.primary }]}>Reload</Text>
         </Pressable>
       </View>
     </View>

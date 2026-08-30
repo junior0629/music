@@ -3,6 +3,12 @@
  * stable label and rethrown. Prevents the "swallowed promise rejection"
  * class of bugs.
  *
+ * AbortError is treated as expected control flow (not a real error):
+ *   - the request was cancelled by an AbortController
+ *   - logging it as ERROR floods the dev log on every cancelled
+ *     debounce/retry
+ *   - callers still see the throw so they can ignore it
+ *
  * Usage:
  *   export const safeSearch = withErrorLogging('PipedProvider.search', search);
  *   const r = await safeSearch('taylor swift');
@@ -20,6 +26,13 @@ export function withErrorLogging<TArgs extends unknown[], TResult>(
     try {
       return await fn(...args);
     } catch (err) {
+      // AbortError is the expected outcome of an AbortController.abort().
+      // Don't log it as an error — it's how we cancel in-flight requests
+      // on user input (search debounce, lyrics retry, etc.).
+      if (isAbortError(err)) {
+        logger.debug(`${label} aborted`, { label, args: safeArgs(args) });
+        throw err;
+      }
       logger.error(
         `${label} failed`,
         { label, args: safeArgs(args) },
@@ -28,6 +41,17 @@ export function withErrorLogging<TArgs extends unknown[], TResult>(
       throw err;
     }
   };
+}
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { name?: unknown; code?: unknown; message?: unknown };
+  return (
+    e.name === 'AbortError' ||
+    e.code === 'ABORT_ERR' ||
+    e.code === 20 || // DOMException.ABORT_ERR
+    (typeof e.message === 'string' && /aborted/i.test(e.message) && (e.name === 'Error' || e.name === undefined))
+  );
 }
 
 function safeArgs(args: unknown[]): unknown {

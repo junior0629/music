@@ -2,7 +2,12 @@ import { Platform, ViewStyle } from 'react-native';
 
 /**
  * Soft shadow presets.
- * On Android we use `elevation`; on iOS and web we use the spread style.
+ *
+ * The new aesthetic is subtle elevation. On Android we use `elevation`
+ * (which is the only shadow the platform renders); on iOS and web we
+ * use the spread style with a low-opacity purple tint that matches
+ * the brand. Numbers are tuned for cards floating just above a
+ * white page.
  */
 function makeShadow(
   color: string,
@@ -25,15 +30,13 @@ function makeShadow(
 export function makeShadows(shadowColor: string, shadowColorStrong: string) {
   return {
     /** Subtle — for cards in lists */
-    sm: makeShadow(shadowColor, 4, 12, 0.25, 2),
-    /** Medium — for floating panels */
-    md: makeShadow(shadowColor, 8, 24, 0.35, 6),
-    /** Strong — for the player screen, modals */
-    lg: makeShadow(shadowColorStrong, 12, 32, 0.45, 12),
-    /** Glow — for accent halo around the play button */
-    glow: {
-      ...makeShadow(shadowColorStrong, 0, 24, 0.6, 8),
-    },
+    sm:   makeShadow(shadowColor, 2, 8, 0.6, 2),
+    /** Medium — for floating elements (mini player, modals) */
+    md:   makeShadow(shadowColor, 4, 16, 0.8, 6),
+    /** Strong — for the Now Playing screen + player overlay */
+    lg:   makeShadow(shadowColorStrong, 8, 24, 1, 12),
+    /** Soft glow — for the play button */
+    glow: makeShadow(shadowColorStrong, 4, 20, 0.9, 8),
   };
 }
 

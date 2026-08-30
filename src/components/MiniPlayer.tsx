@@ -1,12 +1,9 @@
 /**
- * MiniPlayer — the persistent strip above the FloatingNav.
+ * MiniPlayer — the persistent strip above the bottom navigation.
  *
- * Phase 1: placeholder. Shows a small glass strip indicating
- *          "No track playing" until a track is loaded.
- * Phase 2: wires to playerStore. Tap to open the full Now Playing screen.
- *
- * The mini-player animates in when a track loads (slide up from
- * below the nav) and animates out when there's nothing playing.
+ * Solid white pill with a soft purple shadow. Artwork + title +
+ * artist on the left, heart + play/pause on the right. Tapping
+ * anywhere opens the full Now Playing screen.
  */
 import React, { useEffect } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -15,21 +12,24 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from 'react-native-reanimated';
-import { GlassPanel } from './GlassPanel';
-import { useColors, textStyle, spacing, radii } from '@/theme';
-import { usePlayerStore } from '@/store/playerStore';
+import { Ionicons } from '@expo/vector-icons';
+import { useColors, textStyle, spacing, radii, useShadows } from '@/theme';
+import { usePlayerPlaybackStore, usePlayerMetaStore } from '@/store/playerStore';
+import { useLibraryStore } from '@/store/libraryStore';
 import { useRouter } from 'expo-router';
-import * as Haptics from 'expo-haptics';
-import { isNative } from '@/theme';
+import { selection, toggle } from '@/utils/haptics';
 
-const BOTTOM_OFFSET = 84; // sits above the floating nav + a little gap
+const BOTTOM_OFFSET = 76; // sits just above the bottom nav
 
 export function MiniPlayer(): React.ReactElement | null {
   const colors = useColors();
+  const shadows = useShadows();
   const router = useRouter();
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const togglePlay = usePlayerStore((s) => s.togglePlay);
+  const currentTrack = usePlayerMetaStore((s) => s.currentTrack);
+  const isPlaying = usePlayerPlaybackStore((s) => s.isPlaying);
+  const togglePlay = usePlayerMetaStore((s) => s.togglePlay);
+  const isFavorite = useLibraryStore((s) => s.isFavorite);
+  const toggleFavorite = useLibraryStore((s) => s.toggleFavorite);
 
   const translateY = useSharedValue(100);
   const opacity = useSharedValue(0);
@@ -44,102 +44,107 @@ export function MiniPlayer(): React.ReactElement | null {
     }
   }, [currentTrack, translateY, opacity]);
 
-  const style = useAnimatedStyle(() => ({
+  const animated = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
     opacity: opacity.value,
   }));
 
   const openPlayer = (): void => {
     if (!currentTrack) return;
-    if (isNative) {
-      Haptics.selectionAsync().catch(() => undefined);
-    }
+    selection();
     router.push(`/player/${currentTrack.id}`);
   };
 
   const onTogglePlay = (): void => {
-    if (isNative) {
-      Haptics.selectionAsync().catch(() => undefined);
-    }
+    toggle();
     void togglePlay();
   };
 
+  const onToggleFavorite = (): void => {
+    if (!currentTrack) return;
+    toggle();
+    toggleFavorite(currentTrack);
+  };
+
+  // When there's no current track, render a plain off-screen View
+  // instead of an Animated.View. Reanimated 3 fires an initial
+  // UI-thread update on mount which can race against the React tree
+  // and throw `ViewManager for tag N could not be found` on
+  // cold-start. Skipping the animated wrapper in the hidden case
+  // sidesteps that without changing the visible behavior.
+  if (!currentTrack) {
+    return (
+      <View
+        pointerEvents="none"
+        style={[styles.outer, styles.hidden, { bottom: BOTTOM_OFFSET }]}
+      />
+    );
+  }
+
   return (
     <Animated.View
-      pointerEvents={currentTrack ? 'auto' : 'none'}
-      style={[styles.outer, { bottom: BOTTOM_OFFSET }, style]}
+      pointerEvents="auto"
+      style={[styles.outer, { bottom: BOTTOM_OFFSET }, animated]}
     >
-      <GlassPanel
-        style={styles.panel}
-        padding={spacing.sm}
-        radius={radii.xl}
-      >
-        {currentTrack ? (
-          <View style={styles.row}>
-            <Pressable
-              onPress={openPlayer}
-              accessibilityLabel="Open now playing"
-              hitSlop={4}
-              style={styles.thumbHit}
-            >
-              <Image
-                source={{ uri: currentTrack.thumbnail }}
-                style={[
-                  styles.thumb,
-                  { backgroundColor: colors.glassSurfaceSubtle },
-                ]}
-              />
-            </Pressable>
-            <Pressable
-              onPress={openPlayer}
-              accessibilityLabel={`Open ${currentTrack.title} by ${currentTrack.artist}`}
-              style={styles.meta}
-            >
-              <Text
-                numberOfLines={1}
-                style={[textStyle('body'), { color: colors.textPrimary }]}
-              >
-                {currentTrack.title}
-              </Text>
-              <Text
-                numberOfLines={1}
-                style={[textStyle('caption'), { color: colors.textSecondary }]}
-              >
-                {currentTrack.artist}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={onTogglePlay}
-              hitSlop={10}
-              accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
-              style={({ pressed }) => [
-                styles.playPauseButton,
-                { opacity: pressed ? 0.6 : 1 },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.playPauseGlyph,
-                  { color: colors.textPrimary },
-                ]}
-              >
-                {isPlaying ? '⏸' : '▶'}
-              </Text>
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.row}>
-            <View
-              style={[styles.thumb, { backgroundColor: colors.glassSurfaceSubtle }]}
+      <View style={[styles.pill, { backgroundColor: colors.surface }, shadows.lg]}>
+        <View style={styles.row}>
+          <Pressable
+            onPress={openPlayer}
+            accessibilityLabel="Open now playing"
+            hitSlop={4}
+          >
+            <Image
+              source={{ uri: currentTrack.thumbnail }}
+              style={[styles.thumb, { backgroundColor: colors.lavender }]}
             />
+          </Pressable>
+          <Pressable
+            onPress={openPlayer}
+            accessibilityLabel={`Open ${currentTrack.title} by ${currentTrack.artist}`}
+            style={styles.meta}
+          >
             <Text
-              style={[textStyle('body'), { color: colors.textMuted }]}
+              numberOfLines={1}
+              style={[textStyle('caption'), { color: colors.textPrimary, fontWeight: '600' }]}
             >
-              No track playing
+              {currentTrack.title}
             </Text>
-          </View>
-        )}
-      </GlassPanel>
+            <Text
+              numberOfLines={1}
+              style={[textStyle('micro'), { color: colors.textSecondary, marginTop: 2, textTransform: 'none', letterSpacing: 0 }]}
+            >
+              {currentTrack.artist}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={onToggleFavorite}
+            hitSlop={10}
+            accessibilityLabel={isFavorite(currentTrack.id) ? 'Unfavorite' : 'Favorite'}
+            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 6 }]}
+          >
+            <Ionicons
+              name={isFavorite(currentTrack.id) ? 'heart' : 'heart-outline'}
+              size={20}
+              color={isFavorite(currentTrack.id) ? colors.primary : colors.textMuted}
+            />
+          </Pressable>
+          <Pressable
+            onPress={onTogglePlay}
+            hitSlop={10}
+            accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+            style={({ pressed }) => [
+              styles.playButton,
+              { opacity: pressed ? 0.85 : 1 },
+            ]}
+          >
+            <Ionicons
+              name={isPlaying ? 'pause' : 'play'}
+              size={18}
+              color={colors.textOnPrimary}
+            />
+          </Pressable>
+        </View>
+      </View>
     </Animated.View>
   );
 }
@@ -150,43 +155,37 @@ const styles = StyleSheet.create({
     left: spacing.md,
     right: spacing.md,
   },
-  panel: {
+  hidden: {
+    // Pushed well off-screen so it never receives touches; the
+    // wrapper is also pointer-events="none" but this guarantees the
+    // pill can't accidentally intercept input.
+    transform: [{ translateY: 200 }],
+    opacity: 0,
+  },
+  pill: {
     width: '100%',
+    borderRadius: radii.xl,
+    padding: spacing.sm,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.sm,
   },
   thumb: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: radii.sm,
-  },
-  thumbHit: {
-    width: 44,
-    height: 44,
   },
   meta: {
     flex: 1,
   },
-  playPauseButton: {
+  playButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
+    backgroundColor: '#7C3AED',
     alignItems: 'center',
     justifyContent: 'center',
-    // Pure flat white. The wrapping mini-player is glass, so the
-    // button must be solid white to read as a separate, opaque
-    // disc — not a translucent surface. Solid black border so the
-    // shape stays clean on any background.
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    borderColor: '#000000',
-  },
-  playPauseGlyph: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#000000',
   },
 });

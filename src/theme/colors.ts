@@ -1,14 +1,18 @@
 /**
- * Color palette — dark and light.
- * Dark is the primary "premium glassmorphism" mode.
- * Light is a softer alternative; glassmorphism still works but with
- * a different atmosphere.
+ * Color palette — minimalist lavender light theme.
  *
- * Palette is intentionally narrow: deep base, white-ish text,
- * translucent white glass, accent gradients.
+ * Inspired by Apple Music + Spotify discoverability but stripped of
+ * glassmorphism. Pure whites, soft lavenders, a single purple accent.
+ * No dark mode — the app is one aesthetic.
+ *
+ * Palette is intentionally narrow:
+ *   - bgPage / bgPageSoft / bgPageTint for the three page tones
+ *   - surface / surfaceMuted for cards and the search bar
+ *   - primary / primarySoft / lavender / lavenderSoft for purple identity
+ *   - textPrimary / textSecondary / textMuted for hierarchy
+ *   - border / borderStrong for dividers
+ *   - shadow / shadowStrong for elevation
  */
-
-export type ThemeMode = 'dark' | 'light' | 'system';
 
 export interface AccentGradient {
   /** First stop (top-left) */
@@ -20,114 +24,106 @@ export interface AccentGradient {
 }
 
 export interface Palette {
-  mode: 'dark' | 'light';
+  mode: 'light';
 
+  // ── Page ────────────────────────────────────────────────────────────
   /** Page background — base layer behind everything */
-  bgBase: string;
-  /** Second stop of the page background gradient */
-  bgBaseAlt: string;
+  bgPage: string;
+  /** Slightly tinted page background (for the body of every tab) */
+  bgPageSoft: string;
+  /** Lavender tint for the Profile header & gradient flourishes */
+  bgPageTint: string;
 
-  /** Foreground text */
+  // ── Surfaces ────────────────────────────────────────────────────────
+  /** White card surface */
+  surface: string;
+  /** Lavender-tinted surface — search bar, inactive chips */
+  surfaceMuted: string;
+  /** White surface with stronger shadow — mini player, bottom nav */
+  surfaceStrong: string;
+
+  // ── Brand purples ───────────────────────────────────────────────────
+  /** Primary accent — active states, play button, brand */
+  primary: string;
+  /** Softer primary — gradients, secondary brand */
+  primarySoft: string;
+  /** Mid-tone lavender — inactive accents, illustrations */
+  lavender: string;
+  /** Very light lavender — gentle backgrounds, hover states */
+  lavenderSoft: string;
+
+  /** Accent gradient used for premium card & play-button glow */
+  accentGradient: AccentGradient;
+
+  // ── Text ────────────────────────────────────────────────────────────
   textPrimary: string;
   textSecondary: string;
   textMuted: string;
   textInverse: string;
+  textOnPrimary: string;
 
-  /** Glass surfaces (translucent over the background) */
-  glassSurface: string;        // default
-  glassSurfaceStrong: string; // heavier, for nav/mini-player
-  glassSurfaceSubtle: string; // lighter, for hover/pressed states
-  glassBorder: string;
-  glassBorderStrong: string;
-  glassHighlight: string;      // top inner stroke
+  // ── Borders ─────────────────────────────────────────────────────────
+  border: string;
+  borderStrong: string;
 
-  /** Accent — used for play buttons, active states */
-  accent: string;
-  accentSoft: string;
-  accentGradient: AccentGradient;
-
-  /** Semantic */
+  // ── Semantic ────────────────────────────────────────────────────────
   danger: string;
   success: string;
 
-  /** Shadows */
+  // ── Shadows ─────────────────────────────────────────────────────────
   shadow: string;
   shadowStrong: string;
 }
 
-const darkAccent: AccentGradient = {
-  from: '#7C3AED', // violet
-  via: '#EC4899',  // pink
-  to: '#3B82F6',   // blue
+const accentGradient: AccentGradient = {
+  from: '#A78BFA',
+  via: '#C4B5FD',
+  to: '#E9D5FF',
 };
 
-const lightAccent: AccentGradient = {
-  from: '#8B5CF6',
-  via: '#F472B6',
-  to: '#60A5FA',
-};
-
-export const darkPalette: Palette = {
-  mode: 'dark',
-
-  bgBase: '#0A0A14',
-  bgBaseAlt: '#14142B',
-
-  textPrimary: 'rgba(255,255,255,0.95)',
-  textSecondary: 'rgba(255,255,255,0.70)',
-  textMuted: 'rgba(255,255,255,0.45)',
-  textInverse: '#0A0A14',
-
-  glassSurface: 'rgba(255,255,255,0.06)',
-  glassSurfaceStrong: 'rgba(255,255,255,0.10)',
-  glassSurfaceSubtle: 'rgba(255,255,255,0.04)',
-  glassBorder: 'rgba(255,255,255,0.12)',
-  glassBorderStrong: 'rgba(255,255,255,0.18)',
-  glassHighlight: 'rgba(255,255,255,0.18)',
-
-  accent: '#A78BFA',
-  accentSoft: 'rgba(167,139,250,0.20)',
-  accentGradient: darkAccent,
-
-  danger: '#F87171',
-  success: '#34D399',
-
-  shadow: 'rgba(0,0,0,0.40)',
-  shadowStrong: 'rgba(0,0,0,0.60)',
-};
-
-export const lightPalette: Palette = {
+export const palette: Palette = {
   mode: 'light',
 
-  // Medium light purple — the new default. Saturated enough that
-  // glassmorphism still pops, but unmistakably purple.
-  bgBase: '#C4B5FD',     // violet-300
-  bgBaseAlt: '#A78BFA',  // violet-400
+  // Page — off-white with the faintest lavender warmth
+  bgPage:       '#FFFFFF',
+  bgPageSoft:   '#FAF8FF',
+  bgPageTint:   '#F3E8FF',
 
-  textPrimary: 'rgba(30,15,60,0.92)',     // deep purple-black, high contrast over light purple
-  textSecondary: 'rgba(30,15,60,0.70)',
-  textMuted: 'rgba(30,15,60,0.50)',
-  textInverse: '#FFFFFF',
+  // Surfaces
+  surface:       '#FFFFFF',
+  surfaceMuted:  '#F3E8FF',
+  surfaceStrong: '#FFFFFF',
 
-  // Dark glass on the violet background — the cards are clearly
-  // DARKER than the page, like deep spots. No white tint anywhere.
-  // (Tried white tint at 0.45 / 0.62 / 0.75 / 0.30 — all read as
-  //  milky.  Dark fill at 0.55+ finally gives the cards a clear
-  //  "lift" against the violet-300 base.)
-  glassSurface: 'rgba(35, 15, 80, 0.55)',          // deep-violet wash, clearly darker than page
-  glassSurfaceStrong: 'rgba(35, 15, 80, 0.70)',    // strongest, for nav/mini-player
-  glassSurfaceSubtle: 'rgba(35, 15, 80, 0.30)',    // lighter, for hover/pressed
-  glassBorder: 'rgba(255, 255, 255, 0.22)',        // very faint white hairline
-  glassBorderStrong: 'rgba(255, 255, 255, 0.35)',
-  glassHighlight: 'rgba(255, 255, 255, 0.10)',     // top inner stroke — very subtle
+  // Brand
+  primary:      '#7C3AED',
+  primarySoft:  '#A78BFA',
+  lavender:     '#E9D5FF',
+  lavenderSoft: '#F3E8FF',
 
-  accent: '#6D28D9',     // violet-700, more saturated for legibility on light purple
-  accentSoft: 'rgba(109,40,217,0.18)',
-  accentGradient: lightAccent,
+  accentGradient,
 
-  danger: '#DC2626',
-  success: '#059669',
+  // Text
+  textPrimary:   '#17131F',
+  textSecondary: '#777080',
+  textMuted:     '#A099B0',
+  textInverse:   '#FFFFFF',
+  textOnPrimary: '#FFFFFF',
 
-  shadow: 'rgba(60,30,120,0.22)',
-  shadowStrong: 'rgba(60,30,120,0.35)',
+  // Borders
+  border:       '#EEEAF5',
+  borderStrong: '#E0D9F0',
+
+  // Semantic
+  danger:  '#DC2626',
+  success: '#16A34A',
+
+  // Soft purple-tinted shadows
+  shadow:       'rgba(124, 58, 237, 0.06)',
+  shadowStrong: 'rgba(124, 58, 237, 0.12)',
 };
+
+/**
+ * Re-exported as a single object so the rest of the codebase can
+ * still import the same names. `darkPalette` is intentionally gone.
+ */
+export { palette as lightPalette };

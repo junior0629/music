@@ -1,104 +1,198 @@
-import React, { useEffect } from 'react';
+/**
+ * Library screen.
+ *
+ * Layout:
+ *   - Header: "Your Library" + search & add icons
+ *   - Horizontal tab strip: Playlists / Songs / Artists / Albums / Podcasts
+ *   - Filter chips: Recently Added / Downloaded
+ *   - Vertical list of SongRow items
+ *   - "+ New playlist" tile at the bottom (Playlists tab only)
+ */
+import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
-import { GlassCard } from '@/components/GlassCard';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useColors, textStyle, spacing, radii } from '@/theme';
+import { CategoryChip } from '@/components/CategoryChip';
+import { SongRow } from '@/components/SongRow';
 import { useLibraryStore } from '@/store/libraryStore';
 import { logger } from '@/utils/logger';
-
-interface Section {
-  key: string;
-  label: string;
-  icon: string;
-  count?: number;
-}
+import {
+  LIBRARY_FILTERS,
+  LIBRARY_TABS,
+  LibraryFilter,
+  LibraryTab,
+  MOCK_DOWNLOADED,
+  MOCK_LIBRARY_ROWS,
+} from '@/data/mockData';
 
 export default function LibraryScreen() {
   const colors = useColors();
-  const favorites = useLibraryStore((s) => s.favorites);
-  const playlists = useLibraryStore((s) => s.playlists);
-  const recentlyPlayed = useLibraryStore((s) => s.recentlyPlayed);
+  const insets = useSafeAreaInsets();
   const addPlaylist = useLibraryStore((s) => s.addPlaylist);
+
+  const [tab, setTab] = useState<LibraryTab>('Playlists');
+  const [filter, setFilter] = useState<LibraryFilter>('Recently Added');
 
   useEffect(() => {
     logger.setContext('LibraryScreen');
-    logger.debug('LibraryScreen mounted');
     return () => logger.clearContext();
   }, []);
 
-  const sections: Section[] = [
-    { key: 'favorites', label: 'Favorites', icon: '♥', count: favorites.length },
-    { key: 'playlists', label: 'Playlists', icon: '☰', count: playlists.length },
-    { key: 'downloads', label: 'Downloads', icon: '↓', count: 0 },
-    { key: 'local', label: 'Local Music', icon: '◫', count: 0 },
-    { key: 'recent', label: 'Recently Played', icon: '◷', count: recentlyPlayed.length },
-  ];
+  const showDownloaded = filter === 'Downloaded';
+
+  const rows = showDownloaded ? MOCK_DOWNLOADED : MOCK_LIBRARY_ROWS;
+  const isEmpty = rows.length === 0;
 
   return (
     <ScrollView
-      style={styles.root}
-      contentContainerStyle={styles.content}
+      style={styles.scroll}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + spacing.md }]}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={[textStyle('display'), { color: colors.textPrimary, marginBottom: spacing.lg }]}>
-        Library
-      </Text>
-
-      <View style={styles.grid}>
-        {sections.map((s, idx) => (
-          <Animated.View
-            key={s.key}
-            entering={FadeInDown.delay(idx * 60).duration(400)}
-            style={styles.gridItem}
-          >
-            <Pressable
-              accessibilityLabel={`Open ${s.label}`}
-              style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }]}
-            >
-              <GlassCard padding="md" radius="lg" style={styles.tile}>
-                <View
-                  style={[
-                    styles.tileIcon,
-                    {
-                      backgroundColor: colors.accentSoft,
-                      borderColor: colors.glassBorderStrong,
-                    },
-                  ]}
-                >
-                  <Text style={[styles.tileIconText, { color: colors.accent }]}>{s.icon}</Text>
-                </View>
-                <Text style={[textStyle('heading'), { color: colors.textPrimary }]}>
-                  {s.label}
-                </Text>
-                {typeof s.count === 'number' ? (
-                  <Text style={[textStyle('caption'), { color: colors.textMuted }]}>
-                    {s.count} {s.count === 1 ? 'item' : 'items'}
-                  </Text>
-                ) : null}
-              </GlassCard>
-            </Pressable>
-          </Animated.View>
-        ))}
-      </View>
-
-      <View style={{ marginTop: spacing.xl, gap: spacing.sm }}>
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={[textStyle('display'), { color: colors.textPrimary, flex: 1 }]}>
+          Your Library
+        </Text>
         <Pressable
+          hitSlop={8}
+          accessibilityLabel="Search library"
+          style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 6 }]}
+        >
+          <Ionicons name="search" size={22} color={colors.textPrimary} />
+        </Pressable>
+        <Pressable
+          hitSlop={8}
+          accessibilityLabel="Add to library"
           onPress={() => {
             const id = addPlaylist('New Playlist');
             logger.info('Created playlist', { id });
           }}
-          accessibilityLabel="Create playlist"
+          style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 6, marginLeft: 4 }]}
         >
-          <GlassCard padding="md" radius="lg" style={{ borderStyle: 'dashed', borderWidth: 1, borderColor: colors.glassBorderStrong, borderRadius: radii.lg }}>
-            <Text style={[textStyle('heading'), { color: colors.textPrimary }]}>
-              +  New playlist
-            </Text>
-            <Text style={[textStyle('caption'), { color: colors.textMuted }]}>
-              Tap to create
-            </Text>
-          </GlassCard>
+          <View style={[styles.addIcon, { backgroundColor: colors.primary }]}>
+            <Ionicons name="add" size={16} color={colors.textOnPrimary} />
+          </View>
         </Pressable>
       </View>
+
+      {/* Tabs (horizontally scrollable) */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabs}
+      >
+        {LIBRARY_TABS.map((t) => {
+          const active = t === tab;
+          return (
+            <Pressable
+              key={t}
+              onPress={() => setTab(t)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={t}
+              hitSlop={6}
+              style={({ pressed }) => [styles.tabBtn, { opacity: pressed ? 0.7 : 1 }]}
+            >
+              <Text
+                style={[
+                  textStyle('heading'),
+                  {
+                    color: active ? colors.primary : colors.textSecondary,
+                    fontWeight: active ? '700' : '500',
+                  },
+                ]}
+              >
+                {t}
+              </Text>
+              <View
+                style={[
+                  styles.tabUnderline,
+                  {
+                    backgroundColor: active ? colors.primary : 'transparent',
+                  },
+                ]}
+              />
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      {/* Filters — only meaningful on the Playlists tab */}
+      {tab === 'Playlists' ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filters}
+        >
+          {LIBRARY_FILTERS.map((f) => (
+            <CategoryChip
+              key={f}
+              label={f}
+              active={f === filter}
+              onPress={() => setFilter(f)}
+            />
+          ))}
+        </ScrollView>
+      ) : null}
+
+      {/* Body */}
+      {tab === 'Playlists' ? (
+        <>
+          {isEmpty ? (
+            <View style={styles.empty}>
+              <Text style={[textStyle('body'), { color: colors.textMuted }]}>
+                No items yet.
+              </Text>
+            </View>
+          ) : (
+            rows.map((r) => (
+              <SongRow
+                key={r.id}
+                title={r.title}
+                subtitle={r.subtitle}
+                gradient={r.gradient}
+                icon={r.icon}
+                onPress={() => logger.info('Tapped library row', { id: r.id, title: r.title })}
+              />
+            ))
+          )}
+
+          {filter === 'Recently Added' ? (
+            <Pressable
+              onPress={() => {
+                const id = addPlaylist('New Playlist');
+                logger.info('Created playlist', { id });
+              }}
+              accessibilityLabel="Create playlist"
+              style={({ pressed }) => [
+                styles.newTile,
+                {
+                  borderColor: colors.borderStrong,
+                  backgroundColor: colors.surface,
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
+            >
+              <Text style={[textStyle('heading'), { color: colors.textPrimary }]}>
+                +  New playlist
+              </Text>
+              <Text
+                style={[textStyle('caption'), { color: colors.textMuted, marginTop: 2 }]}
+              >
+                Tap to create
+              </Text>
+            </Pressable>
+          ) : null}
+        </>
+      ) : (
+        <View style={styles.empty}>
+          <Text style={[textStyle('body'), { color: colors.textMuted }]}>
+            {tab} will appear here once you add some.
+          </Text>
+        </View>
+      )}
 
       <View style={{ height: 200 }} />
     </ScrollView>
@@ -106,37 +200,51 @@ export default function LibraryScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: {
+  scroll: {
     flex: 1,
   },
   content: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xxxl + spacing.lg,
   },
-  grid: {
+  header: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
+    alignItems: 'center',
+    marginBottom: spacing.md,
   },
-  gridItem: {
-    width: '47%',
-    flexGrow: 1,
-  },
-  tile: {
-    minHeight: 140,
-    justifyContent: 'space-between',
-  },
-  tileIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radii.sm,
-    borderWidth: 1,
+  addIcon: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.sm,
   },
-  tileIconText: {
-    fontSize: 20,
-    fontWeight: '700',
+  tabs: {
+    paddingVertical: spacing.xs,
+    gap: spacing.lg,
+  },
+  tabBtn: {
+    alignItems: 'center',
+    paddingBottom: spacing.xs,
+  },
+  tabUnderline: {
+    marginTop: spacing.xs,
+    height: 2,
+    width: '100%',
+    borderRadius: 1,
+  },
+  filters: {
+    paddingVertical: spacing.sm,
+    gap: spacing.xs,
+  },
+  empty: {
+    paddingVertical: spacing.xxl,
+    alignItems: 'center',
+  },
+  newTile: {
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    marginTop: spacing.sm,
   },
 });

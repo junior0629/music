@@ -1,5 +1,22 @@
+/**
+ * Now Playing — full-screen player.
+ *
+ * Layout (top to bottom):
+ *   - Top bar: back chevron + more
+ *   - Large album artwork
+ *   - Title + artist
+ *   - Progress bar (tap to seek)
+ *   - 3 main controls: previous, play/pause (large purple disc), next
+ *   - Secondary controls: shuffle, repeat, favorite
+ *
+ * Lyrics: a karaoke-style sliding stack of 7 lines, driven by a
+ * shared `window` value synced to the playback position. The
+ * visible style matches the new light aesthetic (dark text on the
+ * soft lavender background, not white-on-dark like the old
+ * artwork-blur background).
+ */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -18,48 +35,24 @@ import {
   GestureDetector,
   GestureHandlerRootView,
 } from 'react-native-gesture-handler';
-import { useColors, spacing, radii, fontFamily } from '@/theme';
-import { usePlayerStore } from '@/store/playerStore';
+import { Ionicons } from '@expo/vector-icons';
+import { useColors, textStyle, spacing, radii, useShadows } from '@/theme';
+import { usePlayerPlaybackStore, usePlayerMetaStore } from '@/store/playerStore';
 import { useLibraryStore } from '@/store/libraryStore';
 import { lyricsService, LyricsResult } from '@/services/lyrics/lyrics';
+import { getProvider } from '@/services/music';
 import { logger } from '@/utils/logger';
+import { selection, toggle } from '@/utils/haptics';
 
 const PLACEHOLDER_THUMB =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="%237C3AED"/><stop offset="0.5" stop-color="%23EC4899"/><stop offset="1" stop-color="%233B82F6"/></linearGradient></defs><rect width="400" height="400" fill="url(%23g)"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="%23A78BFA"/><stop offset="0.5" stop-color="%23C4B5FD"/><stop offset="1" stop-color="%23E9D5FF"/></linearGradient></defs><rect width="400" height="400" fill="url(%23g)"/></svg>',
   );
 
-const TEXT_PRIMARY = '#FFFFFF';
-const TEXT_SECONDARY = 'rgba(255,255,255,0.78)';
-const TEXT_MUTED = 'rgba(255,255,255,0.55)';
-
-/**
- * Vertical stride for the karaoke slide. Each lyric line sits in a
- * slot of this height; translateY = (lineIndex - activeLineIdx) *
- * LYRIC_ROW_HEIGHT. Active line lives in slot 0 (visually centered).
- * Past lines occupy negative slots (above), future lines positive
- * slots (below).
- */
 const LYRIC_ROW_HEIGHT = 56;
-
-/**
- * Number of slots visible above and below the active line. We render
- * 3 above + active + 3 below = 7 lines, so lines slide into view from
- * off-screen rows as the song progresses.
- */
 const LYRIC_WINDOW = 3;
 
-/**
- * A single lyric line. Its vertical position is driven by a single
- * shared `window` value (the animated active index), so when the
- * active line changes every row springs in lockstep — past lines
- * slide up and out, future lines slide up into view.
- *
- * `isActive` controls the text size/weight in React render (RN Text
- * styles can't be animated reliably on web). The translateY/opacity
- * animate smoothly via the shared value.
- */
 function LyricLine({
   line,
   lineIndex,
@@ -73,98 +66,75 @@ function LyricLine({
   isActive: boolean;
   onPress: (startSec: number | undefined) => void;
 }): React.ReactElement {
+  const colors = useColors();
   const animatedStyle = useAnimatedStyle(() => {
     const slot = lineIndex - Math.round(window.value);
     const translateY = slot * LYRIC_ROW_HEIGHT;
     const dist = Math.abs(slot);
-    // Opacity fades with distance from active slot. Off-window rows
-    // (|slot| > LYRIC_WINDOW) are hidden completely.
     let opacity: number;
     if (dist > LYRIC_WINDOW) opacity = 0;
     else if (dist === 0) opacity = 1;
-    else if (dist === 1) opacity = 0.85;
-    else if (dist === 2) opacity = 0.5;
-    else opacity = 0.25;
+    else if (dist === 1) opacity = 0.7;
+    else if (dist === 2) opacity = 0.4;
+    else opacity = 0.2;
     return { transform: [{ translateY }], opacity };
   });
 
   return (
     <Animated.View style={[styles.lyricRowSlot, animatedStyle]}>
-      <LyricRow line={line} isActive={isActive} onPress={onPress} />
-    </Animated.View>
-  );
-}
-
-/** Pure presentational row: text + tap-to-seek. Tappable rows are
- *  the synced ones (those with a startSec); plain-lyrics rows are
- *  decorative. */
-function LyricRow({
-  line,
-  isActive,
-  onPress,
-}: {
-  line: { text: string; startSec?: number } | undefined;
-  isActive: boolean;
-  onPress: (startSec: number | undefined) => void;
-}): React.ReactElement {
-  const text = line?.text ?? ' ';
-  // Active line can grow to 3 lines; neighbors cap at 2 to keep the
-  // slide visually tight.
-  return (
-    <Pressable
-      onPress={() => onPress(line?.startSec)}
-      disabled={!line?.startSec}
-      accessibilityLabel={line?.text ? `Seek to "${line.text}"` : 'Lyric line'}
-      style={({ pressed }) => [
-        styles.lyricRow,
-        pressed && styles.lyricPressed,
-      ]}
-    >
-      <Text
-        numberOfLines={isActive ? 3 : 2}
-        style={[
-          styles.lyricText,
-          isActive ? styles.lyricTextActive : styles.lyricTextPast,
-        ]}
+      <Pressable
+        onPress={() => onPress(line?.startSec)}
+        disabled={!line?.startSec}
+        accessibilityLabel={line?.text ? `Seek to "${line.text}"` : 'Lyric line'}
+        style={({ pressed }) => [styles.lyricRow, pressed && { opacity: 0.6 }]}
       >
-        {text}
-      </Text>
-    </Pressable>
+        <Text
+          numberOfLines={isActive ? 3 : 2}
+          style={[
+            textStyle(isActive ? 'heading' : 'caption'),
+            {
+              color: isActive ? colors.textPrimary : colors.textMuted,
+              fontSize: isActive ? 18 : 14,
+              lineHeight: isActive ? 24 : 19,
+              fontWeight: isActive ? '700' : '500',
+              textAlign: 'center',
+            },
+          ]}
+        >
+          {line?.text ?? ' '}
+        </Text>
+      </Pressable>
+    </Animated.View>
   );
 }
 
 export default function NowPlayingScreen() {
   const colors = useColors();
+  const shadows = useShadows();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
 
-  const currentTrack = usePlayerStore((s) => s.currentTrack);
-  const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const position = usePlayerStore((s) => s.position);
-  const duration = usePlayerStore((s) => s.duration);
-  const togglePlay = usePlayerStore((s) => s.togglePlay);
-  const seek = usePlayerStore((s) => s.seek);
-  const next = usePlayerStore((s) => s.next);
-  const prev = usePlayerStore((s) => s.prev);
-  const toggleShuffle = usePlayerStore((s) => s.toggleShuffle);
-  const cycleRepeat = usePlayerStore((s) => s.cycleRepeat);
-  const isShuffled = usePlayerStore((s) => s.isShuffled);
-  const repeat = usePlayerStore((s) => s.repeat);
-  const isBuffering = usePlayerStore((s) => s.isBuffering);
-  const lastError = usePlayerStore((s) => s.lastError);
+  const currentTrack = usePlayerMetaStore((s) => s.currentTrack);
+  const togglePlay = usePlayerMetaStore((s) => s.togglePlay);
+  const seek = usePlayerMetaStore((s) => s.seek);
+  const next = usePlayerMetaStore((s) => s.next);
+  const prev = usePlayerMetaStore((s) => s.prev);
+  const toggleShuffle = usePlayerMetaStore((s) => s.toggleShuffle);
+  const cycleRepeat = usePlayerMetaStore((s) => s.cycleRepeat);
+  const isShuffled = usePlayerMetaStore((s) => s.isShuffled);
+  const repeat = usePlayerMetaStore((s) => s.repeat);
+  const lastError = usePlayerMetaStore((s) => s.lastError);
+  const isPlaying = usePlayerPlaybackStore((s) => s.isPlaying);
+  const position = usePlayerPlaybackStore((s) => s.position);
+  const duration = usePlayerPlaybackStore((s) => s.duration);
+  const isBuffering = usePlayerPlaybackStore((s) => s.isBuffering);
 
-  // Subscribe to the favorites array (not the isFavorite function reference),
-  // so the component re-renders when favorites change. The earlier version
-  // subscribed to `s.isFavorite` which is a stable function reference and
-  // never changes — the heart stayed empty even after toggling.
   const favorites = useLibraryStore((s) => s.favorites);
   const toggleFavorite = useLibraryStore((s) => s.toggleFavorite);
 
   const [lyrics, setLyrics] = useState<LyricsResult>({ kind: 'none' });
   const [lyricsLoading, setLyricsLoading] = useState(false);
-  // Bumping this counter re-runs the lyrics fetch effect — used by
-  // the RETRY button when the service returned `unavailable`.
   const [lyricsRetryNonce, setLyricsRetryNonce] = useState(0);
 
   useEffect(() => {
@@ -173,13 +143,34 @@ export default function NowPlayingScreen() {
     return () => logger.clearContext();
   }, [id, currentTrack]);
 
-  // Spinning artwork: only spin while playing. Pause → freeze the
-  // rotation where it is; play → resume from current angle.
+  // Deep-link safety net
+  useEffect(() => {
+    if (!id) return;
+    if (currentTrack && currentTrack.id === id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        logger.info('NowPlaying: deep-link load', { trackId: id });
+        const track = await getProvider().getTrack(id);
+        if (cancelled) return;
+        await usePlayerMetaStore.getState().loadTrack(track);
+      } catch (err) {
+        const e = err as Error;
+        logger.error('NowPlaying: deep-link load failed', { trackId: id, err: e?.message ?? String(err) }, e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, currentTrack]);
+
+  // Subtle artwork rotation while playing. Faster than the vinyl-record
+  // spin of the old design; here it just feels alive.
   const spin = useSharedValue(0);
   useEffect(() => {
     if (isPlaying) {
       spin.value = withRepeat(
-        withTiming(360, { duration: 18_000, easing: Easing.linear }),
+        withTiming(360, { duration: 24_000, easing: Easing.linear }),
         -1,
         false,
       );
@@ -199,18 +190,8 @@ export default function NowPlayingScreen() {
     setLyricsRetryNonce((n) => n + 1);
   }, [track?.id]);
 
-  // Real width of the seek bar's Pressable. Measured on layout. We use
-  // this instead of `window.innerWidth` for the seek math because the
-  // bar is inset from the screen edge by `paddingHorizontal: spacing.lg`
-  // and a fixed 4px track — using the window width would skew the
-  // ratio heavily. Without measuring, taps near the start of the bar
-  // land at ~0% (correct) but taps past the end get clamped to 100%,
-  // and on web, the previous implementation sometimes wrapped to 0.
   const seekBarWidthRef = useRef(0);
 
-  // Fetch real lyrics whenever the track changes. The previous in-flight
-  // request is aborted (via AbortController) when the user skips to
-  // another track, so we don't show stale text from the old song.
   useEffect(() => {
     if (!track) {
       setLyrics({ kind: 'none' });
@@ -220,8 +201,6 @@ export default function NowPlayingScreen() {
     const ac = new AbortController();
     setLyricsLoading(true);
     setLyrics({ kind: 'none' });
-    // Surface the first try as a silent log so the dev log shows
-    // the chain of attempts without spamming WARN each time.
     logger.info('Lyrics: fetch start', { trackId: track.id });
     let autoRetryTimer: ReturnType<typeof setTimeout> | null = null;
     lyricsService
@@ -229,11 +208,6 @@ export default function NowPlayingScreen() {
       .then((r) => {
         if (ac.signal.aborted) return;
         setLyrics(r);
-        // If the service returned `unavailable` (5xx / network), try
-        // once more after 8s. Cloudflare POPs are often transient —
-        // a second try usually hits a different POP and succeeds.
-        // If still unavailable, the "Lyrics service unreachable"
-        // message + RETRY button shows as before.
         if (r.kind === 'unavailable') {
           logger.info('Lyrics: auto-retry in 8s', { trackId: track.id });
           autoRetryTimer = setTimeout(() => {
@@ -255,21 +229,9 @@ export default function NowPlayingScreen() {
     };
   }, [track?.id, lyricsRetryNonce]);
 
-  // Active lyric line: synced → by timestamp with a tiny lookahead so
-  // the line is highlighted right as the singer starts (the lookahead
-  // mostly compensates for the IFrame position-polling lag of ~250ms).
-  // A larger lookahead used to be applied here, but it caused fast
-  // rap tracks to advance lines too early. With a small lookahead the
-  // cadence is correct for both slow songs and rap, and the user can
-  // tap a line to seek forward if it ever lands late.
   const LOOKAHEAD_SEC = 0.3;
   const { activeLineIdx, preVocal } = useMemo(() => {
     if (lyrics.kind === 'synced' && lyrics.lines.length > 0) {
-      // Detect "artist hasn't started yet" — the first LRC line's
-      // startSec is often a few seconds in. Before the singer is
-      // actually audible, don't highlight any line; just let the user
-      // see the upcoming lyrics as placeholders. We use the FIRST
-      // LRC line's startSec (not the active one) as the threshold.
       const firstStart = lyrics.lines[0]?.startSec ?? 0;
       if (position + LOOKAHEAD_SEC < firstStart) {
         return { activeLineIdx: -1, preVocal: true };
@@ -294,27 +256,15 @@ export default function NowPlayingScreen() {
     return { activeLineIdx: 0, preVocal: false };
   }, [lyrics, position, displayDuration]);
 
-  // Lyric slide animation. A single shared value tracks the active
-  // line index as a float. When activeLineIdx changes, we spring
-  // the value to the new index; every LyricLine's translateY is
-  // driven by `(lineIndex - round(window.value)) * ROW_HEIGHT`, so
-  // the whole stack glides in lockstep — past lines slide up out,
-  // the new active slides into the center, future lines appear
-  // from below. This is the karaoke-style vertical scroll.
   const lyricWindow = useSharedValue(0);
   useEffect(() => {
-    // Clamp pre-vocal (-1) and out-of-range indices to 0 so we don't
-    // animate the whole stack off-screen before the singer starts.
     const target = activeLineIdx < 0 ? 0 : activeLineIdx;
     lyricWindow.value = withTiming(target, {
       duration: 420,
-      easing: Easing.bezierFn(0.22, 1, 0.36, 1), // easeOutQuart
+      easing: Easing.bezierFn(0.22, 1, 0.36, 1),
     });
   }, [activeLineIdx, lyricWindow]);
 
-  // Tap a lyric line → seek to that line's timestamp. Only meaningful
-  // for synced LRC lines (those have a startSec). For plain lyrics
-  // there are no timestamps to seek to, so the press is a no-op.
   const seekToLine = (startSec: number | undefined) => {
     if (typeof startSec !== 'number') return;
     void seek(startSec);
@@ -323,11 +273,6 @@ export default function NowPlayingScreen() {
   const favorited = track ? favorites.some((t) => t.id === track.id) : false;
   const artUri = track?.thumbnail ?? PLACEHOLDER_THUMB;
 
-  // Draggable seek: tap or drag anywhere on the bar to seek. The
-  // gesture runs on the UI thread (worklet) and only jumps back to
-  // JS to call seek() — so the bar updates smoothly even mid-drag.
-  // We use the pressable's measured width as the denominator (not
-  // window.innerWidth) so the math is correct on every screen size.
   const seekGesture = useMemo(() => {
     const seekToX = (x: number) => {
       if (!track || displayDuration <= 0) return;
@@ -337,171 +282,137 @@ export default function NowPlayingScreen() {
     };
     return Gesture.Pan()
       .minDistance(0)
-      .onBegin((e) => {
-        runOnJS(seekToX)(e.x);
-      })
-      .onUpdate((e) => {
-        runOnJS(seekToX)(e.x);
-      });
+      .onBegin((e) => runOnJS(seekToX)(e.x))
+      .onUpdate((e) => runOnJS(seekToX)(e.x));
   }, [track, displayDuration, seek]);
 
   return (
-    <GestureHandlerRootView style={styles.root}>
-      {/* Blurred album-artwork background. Web uses CSS `filter: blur`
-          on a 1.2×-scaled image wrapped in overflow:hidden. Native
-          layers a BlurView on top of the image for OS-level blur.
-          A dark scrim sits on top so white text stays readable. */}
-      {Platform.OS === 'web' ? (
-        <>
-          <View style={[StyleSheet.absoluteFill, styles.artBgWrap]} pointerEvents="none">
-            <Image source={{ uri: artUri }} style={styles.artBg} blurRadius={40} />
-          </View>
-          <View
-            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.55)' }]}
-            pointerEvents="none"
-          />
-        </>
-      ) : (
-        <>
-          {/* Native background. We use a single full-screen Image
-              with `blurRadius` for the blur, plus a dark scrim
-              View on top. The previous BlurView-based approach
-              tinted the foreground content (text + play button)
-              with the artwork's warm color, because expo-blur's
-              native surface sometimes draws above the React
-              content view. A plain View with a dark background
-              is rock-solid — no risk of bleeding into the
-              content layer. */}
-          <Image
-            source={{ uri: artUri }}
-            style={[StyleSheet.absoluteFill, { opacity: 0.9 }]}
-            blurRadius={40}
-          />
-          <View
-            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.55)' }]}
-            pointerEvents="none"
-          />
-        </>
-      )}
-
-      <View style={[styles.content, { paddingTop: insets.top + spacing.md, paddingBottom: insets.bottom + spacing.md }]}>
-        {/* Header: 'NOW PLAYING' label + close (←) — both white */}
-        <View style={styles.header}>
-          <Text style={styles.headerLabel}>
-            {track ? 'NOW PLAYING' : 'NO TRACK'}
-          </Text>
-          <Pressable onPress={() => router.back()} hitSlop={10} accessibilityLabel="Close player">
-            <Text style={styles.closeIcon}>←</Text>
+    <GestureHandlerRootView style={[styles.root, { backgroundColor: colors.bgPageSoft }]}>
+      <View
+        style={[
+          styles.content,
+          { paddingTop: insets.top + spacing.md, paddingBottom: insets.bottom + spacing.xl },
+        ]}
+      >
+        {/* Top bar: back chevron + more */}
+        <View style={styles.topBar}>
+          <Pressable
+            onPress={() => router.back()}
+            hitSlop={10}
+            accessibilityLabel="Close player"
+            style={({ pressed }) => [styles.iconButton, { opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Ionicons name="chevron-down" size={26} color={colors.textPrimary} />
           </Pressable>
-        </View>
-
-        {/* Middle: artwork on the left, lyrics on the right */}
-        <View style={styles.middle}>
-          <View style={styles.artColumn}>
-            <Animated.View style={[styles.artDisc, artSpinStyle]}>
-              {/* Artwork image. YouTube thumbnails have a dark border
-                  around the subject; if we display them at 100% the
-                  dark border shows inside the round disc. So we
-                  scale the image 1.15x and center it — the disc's
-                  `overflow:hidden` clips the dark border outside
-                  the circle, and `resizeMode:cover` keeps the photo
-                  aspect ratio correct. This matches what worked on
-                  web (the previous CSS backgroundImage+scale 1.2
-                  hack), but using native primitives. */}
-              {artUri ? (
-                <Image
-                  source={{ uri: artUri }}
-                  style={styles.artImage}
-                  resizeMode="cover"
-                />
-              ) : null}
-              {/* Center spindle hole — the small dark circle at the
-                  center of a vinyl record / CD */}
-              <View style={styles.artSpindle} />
-            </Animated.View>
-            <Text numberOfLines={1} style={styles.titleText}>
-              {track?.title ?? 'Nothing playing'}
-            </Text>
-            <Text numberOfLines={1} style={styles.artistText}>
-              {track?.artist ?? 'Pick a song from Search'}
-            </Text>
-          </View>
-
-          <View style={styles.lyricsColumn}>
-            {lyrics.kind === 'instrumental' ? (
-              <Text style={[styles.lyricText, styles.lyricTextActive]}>♪ Instrumental</Text>
-            ) : lyrics.kind === 'unavailable' ? (
-              <View style={{ alignItems: 'center' }}>
-                <Text style={[styles.lyricText, styles.lyricTextFuture]}>
-                  Lyrics service unreachable
-                </Text>
-                <Pressable
-                  onPress={retryLyrics}
-                  hitSlop={10}
-                  accessibilityLabel="Retry lyrics"
-                  style={({ pressed }) => [
-                    styles.lyricRetry,
-                    { opacity: pressed ? 0.6 : 1 },
-                  ]}
-                >
-                  <Text style={[styles.lyricText, styles.lyricRetryLabel]}>RETRY</Text>
-                </Pressable>
-              </View>
-            ) : lyrics.kind === 'none' && lyricsLoading ? (
-              <Text style={[styles.lyricText, styles.lyricTextFuture]}>…</Text>
-            ) : lyrics.kind === 'none' ? (
-              <Text style={[styles.lyricText, styles.lyricTextFuture]}>Lyrics not available</Text>
-            ) : (
-              // Karaoke-style sliding lyric view. We render a 7-line
-              // window (3 above + active + 3 below) and animate a
-              // single `lyricWindow` shared value as the active
-              // index changes. Each line's translateY is driven by
-              // `(lineIndex - round(lyricWindow)) * ROW_HEIGHT`, so
-              // the whole stack glides in lockstep on every change.
-              <View style={styles.lyricCarousel}>
-                {(() => {
-                  const total = lyrics.lines.length;
-                  // Renderable index range (clamped to bounds). Even
-                  // for out-of-range indices we still render the row
-                  // at the same lineIndex so its translateY remains
-                  // correct, and the LyricLine's animated opacity
-                  // hides it once it's off-window.
-                  const center = activeLineIdx < 0 ? 0 : activeLineIdx;
-                  const indices: number[] = [];
-                  for (let k = center - LYRIC_WINDOW; k <= center + LYRIC_WINDOW; k++) {
-                    indices.push(k);
-                  }
-                  return indices.map((i) => (
-                    <LyricLine
-                      key={i}
-                      line={i >= 0 && i < total ? lyrics.lines[i] : undefined}
-                      lineIndex={i}
-                      window={lyricWindow}
-                      isActive={i === activeLineIdx}
-                      onPress={seekToLine}
-                    />
-                  ));
-                })()}
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Progress + favorite heart (right-aligned, above controls) */}
-        <View style={styles.progressRow}>
           <View style={{ flex: 1 }} />
           <Pressable
-            onPress={() => track && toggleFavorite(track)}
+            onPress={() => logger.info('NowPlaying: more menu tapped')}
             hitSlop={10}
-            disabled={!track}
-            accessibilityLabel={favorited ? 'Unfavorite' : 'Favorite'}
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
+            accessibilityLabel="More options"
+            style={({ pressed }) => [styles.iconButton, { opacity: pressed ? 0.6 : 1 }]}
           >
-            <Text style={[styles.heart, favorited ? styles.heartOn : null]}>
-              {favorited ? '♥' : '♡'}
-            </Text>
+            <Ionicons name="ellipsis-horizontal" size={24} color={colors.textPrimary} />
           </Pressable>
         </View>
+
+        {/* Artwork */}
+        <View style={styles.artWrap}>
+          <Animated.View style={[styles.artDisc, shadows.lg, artSpinStyle]}>
+            <Image source={{ uri: artUri }} style={styles.artImage} resizeMode="cover" />
+          </Animated.View>
+        </View>
+
+        {/* Title + artist */}
+        <View style={styles.meta}>
+          <Text
+            numberOfLines={1}
+            style={[textStyle('title'), { color: colors.textPrimary, textAlign: 'center' }]}
+          >
+            {track?.title ?? 'Nothing playing'}
+          </Text>
+          <Text
+            numberOfLines={1}
+            style={[
+              textStyle('body'),
+              { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.xxs },
+            ]}
+          >
+            {track?.artist ?? 'Pick a song to start'}
+          </Text>
+        </View>
+
+        {/* Lyrics (compact, below meta) */}
+        <View style={styles.lyricsWrap}>
+          {lyrics.kind === 'instrumental' ? (
+            <Text
+              style={[
+                textStyle('body'),
+                { color: colors.textMuted, textAlign: 'center' },
+              ]}
+            >
+              ♪ Instrumental
+            </Text>
+          ) : lyrics.kind === 'unavailable' ? (
+            <View style={{ alignItems: 'center' }}>
+              <Text
+                style={[
+                  textStyle('caption'),
+                  { color: colors.textMuted, textAlign: 'center' },
+                ]}
+              >
+                Lyrics service unreachable
+              </Text>
+              <Pressable
+                onPress={() => {
+                  selection();
+                  retryLyrics();
+                }}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Retry lyrics"
+                style={({ pressed }) => [
+                  styles.retryPill,
+                  { borderColor: colors.borderStrong, opacity: pressed ? 0.6 : 1 },
+                ]}
+              >
+                <Text style={[textStyle('micro'), { color: colors.textPrimary }]}>
+                  RETRY
+                </Text>
+              </Pressable>
+            </View>
+          ) : lyrics.kind === 'none' && lyricsLoading ? (
+            <Text style={[textStyle('caption'), { color: colors.textMuted, textAlign: 'center' }]}>
+              …
+            </Text>
+          ) : lyrics.kind === 'none' ? (
+            <Text style={[textStyle('caption'), { color: colors.textMuted, textAlign: 'center' }]}>
+              Lyrics not available
+            </Text>
+          ) : (
+            <View style={styles.lyricCarousel}>
+              {(() => {
+                const total = lyrics.lines.length;
+                const center = activeLineIdx < 0 ? 0 : activeLineIdx;
+                const indices: number[] = [];
+                for (let k = center - LYRIC_WINDOW; k <= center + LYRIC_WINDOW; k++) {
+                  indices.push(k);
+                }
+                return indices.map((i) => (
+                  <LyricLine
+                    key={i}
+                    line={i >= 0 && i < total ? lyrics.lines[i] : undefined}
+                    lineIndex={i}
+                    window={lyricWindow}
+                    isActive={i === activeLineIdx}
+                    onPress={seekToLine}
+                  />
+                ));
+              })()}
+            </View>
+          )}
+        </View>
+
+        {/* Progress + seek */}
         <GestureDetector gesture={seekGesture}>
           <View
             onLayout={(e) => {
@@ -510,12 +421,13 @@ export default function NowPlayingScreen() {
             style={styles.progressHitArea}
             accessibilityLabel="Seek"
           >
-            <View style={styles.progressTrack}>
+            <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
               <View
                 style={[
                   styles.progressFill,
                   {
                     width: `${displayDuration > 0 ? Math.min(100, (position / displayDuration) * 100) : 0}%`,
+                    backgroundColor: colors.primary,
                   },
                 ]}
               />
@@ -523,113 +435,156 @@ export default function NowPlayingScreen() {
           </View>
         </GestureDetector>
         <View style={styles.timeRow}>
-          <Pressable
-            onPress={() => {
-              if (!track) return;
-              void seek(0);
-            }}
-            hitSlop={8}
-            disabled={!track}
-            accessibilityLabel="Restart from beginning"
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
-          >
-            <Text style={styles.timeTextSmall}>{formatTime(position)}</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              if (!track || displayDuration <= 0) return;
-              // Seek to 10s before end (lets the user "skip to near the end")
-              void seek(Math.max(0, displayDuration - 10));
-            }}
-            hitSlop={8}
-            disabled={!track || displayDuration <= 0}
-            accessibilityLabel="Skip near end"
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1 }]}
-          >
-            <Text style={styles.timeTextSmall}>{formatTime(displayDuration)}</Text>
-          </Pressable>
+          <Text style={[textStyle('micro'), { color: colors.textMuted }]}>
+            {formatTime(position)}
+          </Text>
+          <Text style={[textStyle('micro'), { color: colors.textMuted }]}>
+            {formatTime(displayDuration)}
+          </Text>
         </View>
 
         {lastError ? (
-          <Text style={styles.errorText}>{lastError}</Text>
+          <Text style={[textStyle('caption'), { color: colors.danger, textAlign: 'center' }]}>
+            {lastError}
+          </Text>
         ) : null}
 
         {/* Transport controls */}
-        <Animated.View entering={FadeInDown.delay(280).duration(500)} style={styles.controls}>
+        <View style={styles.controls}>
           <Pressable
-            onPress={toggleShuffle}
-            hitSlop={8}
+            onPress={() => {
+              toggle();
+              void toggleShuffle();
+            }}
+            accessibilityRole="button"
             accessibilityLabel={`Shuffle ${isShuffled ? 'on' : 'off'}`}
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
+            accessibilityState={{ selected: isShuffled }}
+            style={({ pressed }) => [styles.transportHit, pressed && { opacity: 0.6 }]}
           >
-            <Text
-              style={[
-                styles.iconText,
-                { color: isShuffled ? TEXT_PRIMARY : TEXT_MUTED, fontSize: 20 },
-              ]}
-            >
-              ⇄
-            </Text>
+            <Ionicons
+              name="shuffle"
+              size={22}
+              color={isShuffled ? colors.primary : colors.textMuted}
+            />
           </Pressable>
 
           <Pressable
-            onPress={prev}
-            hitSlop={8}
+            onPress={() => {
+              if (isBuffering) return;
+              selection();
+              void prev();
+            }}
+            disabled={isBuffering}
+            accessibilityRole="button"
             accessibilityLabel="Previous"
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
+            style={({ pressed }) => [
+              styles.transportHit,
+              pressed && !isBuffering && { opacity: 0.6 },
+              isBuffering && { opacity: 0.3 },
+            ]}
           >
-            <Text style={[styles.iconText, { color: TEXT_PRIMARY, fontSize: 28 }]}>⏮</Text>
+            <Ionicons
+              name="play-skip-back"
+              size={28}
+              color={isBuffering ? colors.textMuted : colors.textPrimary}
+            />
           </Pressable>
 
-          {/* Play button. We wrap a View (with the visible white
-              disc + shadow) and a Pressable (touch only) so the
-              backgroundColor is unambiguously opaque, regardless
-              of any Pressable/Android-specific tint behavior. */}
-          <View style={styles.playButton}>
+          {/* Play button — large purple disc */}
+          <View style={[styles.playDisc, { backgroundColor: colors.primary }, shadows.glow]}>
             <Pressable
-              onPress={() => togglePlay()}
-              hitSlop={8}
-              disabled={!track}
-              accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+              onPress={() => {
+                if (isBuffering) return;
+                toggle();
+                void togglePlay();
+              }}
+              disabled={!track || isBuffering}
+              accessibilityRole="button"
+              accessibilityLabel={isBuffering ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
               style={({ pressed }) => [
                 styles.playButtonPressable,
-                { opacity: pressed ? 0.85 : 1 },
+                { opacity: pressed && !isBuffering ? 0.85 : 1 },
               ]}
             >
-              <Text style={styles.playGlyph}>
-                {isBuffering ? '◌' : isPlaying ? '⏸' : '▶'}
-              </Text>
+              {isBuffering ? (
+                <ActivityIndicator size="large" color={colors.textOnPrimary} />
+              ) : (
+                <Ionicons
+                  name={isPlaying ? 'pause' : 'play'}
+                  size={32}
+                  color={colors.textOnPrimary}
+                />
+              )}
             </Pressable>
           </View>
 
           <Pressable
-            onPress={next}
-            hitSlop={8}
+            onPress={() => {
+              if (isBuffering) return;
+              selection();
+              void next();
+            }}
+            disabled={isBuffering}
+            accessibilityRole="button"
             accessibilityLabel="Next"
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
+            style={({ pressed }) => [
+              styles.transportHit,
+              pressed && !isBuffering && { opacity: 0.6 },
+              isBuffering && { opacity: 0.3 },
+            ]}
           >
-            <Text style={[styles.iconText, { color: TEXT_PRIMARY, fontSize: 28 }]}>⏭</Text>
+            <Ionicons
+              name="play-skip-forward"
+              size={28}
+              color={isBuffering ? colors.textMuted : colors.textPrimary}
+            />
           </Pressable>
 
           <Pressable
-            onPress={cycleRepeat}
-            hitSlop={8}
+            onPress={() => {
+              toggle();
+              void cycleRepeat();
+            }}
+            accessibilityRole="button"
             accessibilityLabel={`Repeat ${repeat}`}
-            style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 8 }]}
+            accessibilityState={{ selected: repeat !== 'off' }}
+            style={({ pressed }) => [styles.transportHit, pressed && { opacity: 0.6 }]}
           >
-            <Text
-              style={[
-                styles.iconText,
-                {
-                  color: repeat !== 'off' ? TEXT_PRIMARY : TEXT_MUTED,
-                  fontSize: 20,
-                },
-              ]}
-            >
-              {repeat === 'one' ? '↻¹' : '↻'}
-            </Text>
+            <View>
+              <Ionicons
+                name="repeat"
+                size={22}
+                color={repeat !== 'off' ? colors.primary : colors.textMuted}
+              />
+              {repeat === 'one' ? (
+                <Text style={[styles.repeatOneBadge, { color: colors.primary }]}>1</Text>
+              ) : null}
+            </View>
           </Pressable>
-        </Animated.View>
+        </View>
+
+        {/* Favorite row */}
+        <Pressable
+          onPress={() => track && toggleFavorite(track)}
+          hitSlop={10}
+          disabled={!track}
+          accessibilityLabel={favorited ? 'Unfavorite' : 'Favorite'}
+          style={({ pressed }) => [styles.favoriteRow, { opacity: pressed ? 0.6 : 1 }]}
+        >
+          <Ionicons
+            name={favorited ? 'heart' : 'heart-outline'}
+            size={22}
+            color={favorited ? colors.primary : colors.textSecondary}
+          />
+          <Text
+            style={[
+              textStyle('caption'),
+              { color: favorited ? colors.primary : colors.textSecondary, marginLeft: 6 },
+            ]}
+          >
+            {favorited ? 'In your library' : 'Add to library'}
+          </Text>
+        </Pressable>
       </View>
     </GestureHandlerRootView>
   );
@@ -647,108 +602,43 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: spacing.lg,
-    // Transparent foreground over the blurred artwork. The
-    // foreground must NOT receive any tint from the underlying
-    // BlurView/image layers (which pull the artwork's warm color).
-    // This explicit transparent background guarantees z-order
-    // without affecting the visual.
   },
 
-  // Header
-  header: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
+    height: 44,
   },
-  headerLabel: {
-    color: TEXT_MUTED,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.4,
-  },
-  closeIcon: {
-    color: TEXT_PRIMARY,
-    fontSize: 28,
-    fontWeight: '300',
-  },
-
-  // Middle row: artwork (left) + lyrics (right)
-  middle: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.lg,
-    minHeight: 220,
-  },
-  artColumn: {
-    width: '40%',
-    alignItems: 'center',
-  },
-  // Vinyl-record style artwork. The disc is a single 180x180 round
-  // box with overflow:hidden. The artwork is set as the disc's CSS
-  // background-image (via inline style in the JSX). The background
-  // is intentionally zoomed (135%) so any letterbox bars from the
-  // source's aspect ratio are pushed outside the disc, where the
-  // overflow:hidden clips them. backgroundImage/backgroundSize
-  // aren't in RN's standard ViewStyle type but RN Web supports
-  // them at runtime as standard CSS properties.
-  artDisc: {
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    overflow: 'hidden',
+  iconButton: {
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    // The disc background is neutral dark grey, not pure black. If
-    // the image fails to load (slow network, broken URL, etc.) the
-    // disc shows a dark spot — clearly "not loaded" but not the
-    // harsh #000 that looks like a screen error.
-    backgroundColor: '#1a1a1a',
-  },
-  artImage: {
-    // 15% larger than the disc (207x207 in a 180x180 circle) and
-    // centered. The disc's `overflow:hidden` clips the dark borders
-    // of the YouTube thumbnail. Width/height set explicitly so the
-    // cover resize mode computes against this larger box, not the
-    // disc's actual size.
-    width: 207,
-    height: 207,
-  },
-  artSpindle: {
-    position: 'absolute',
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-  },
-  titleText: {
-    color: TEXT_PRIMARY,
-    fontSize: 16,
-    fontWeight: '700',
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
-  artistText: {
-    color: TEXT_SECONDARY,
-    fontSize: 13,
-    marginTop: 2,
-    textAlign: 'center',
   },
 
-  // Lyrics column on the right. The `lyricsColumn` is the
-  // outer container (right half of the middle row). The
-  // `lyricCarousel` is a fixed-height viewport that holds the
-  // sliding stack of lines; each `lyricRowSlot` is one slot
-  // (LYRIC_ROW_HEIGHT tall) and gets its own translateY driven
-  // by the active-line shared value, so the whole stack glides
-  // smoothly when the active line advances.
-  lyricsColumn: {
-    flex: 1,
-    paddingLeft: spacing.lg,
-    paddingRight: spacing.sm,
+  artWrap: {
+    alignItems: 'center',
+    marginTop: spacing.lg,
+  },
+  artDisc: {
+    width: 280,
+    height: 280,
+    borderRadius: 28,
+    overflow: 'hidden',
+    backgroundColor: '#E9D5FF',
+  },
+  artImage: {
+    width: '100%',
+    height: '100%',
+  },
+
+  meta: {
+    marginTop: spacing.lg,
+  },
+
+  lyricsWrap: {
+    marginTop: spacing.md,
+    minHeight: LYRIC_ROW_HEIGHT,
     justifyContent: 'center',
   },
   lyricCarousel: {
@@ -774,152 +664,76 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.xs,
   },
-  lyricText: {
-    textAlign: 'center',
-    fontFamily: fontFamily.oswald,
-    letterSpacing: 0.3,
-    flexShrink: 1,
-  },
-  lyricRetry: {
-    marginTop: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: TEXT_SECONDARY,
-  },
-  lyricRetryLabel: {
-    color: TEXT_PRIMARY,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-  },
-  lyricTextActive: {
-    color: TEXT_PRIMARY,
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: '800',
-  },
-  lyricTextPast: {
-    color: TEXT_SECONDARY,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '400',
-  },
-  lyricTextFuture: {
-    color: TEXT_MUTED,
-    fontSize: 14,
-    lineHeight: 19,
-    fontWeight: '400',
-  },
-  lyricPressed: {
-    opacity: 0.6,
+  retryPill: {
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    borderRadius: radii.pill,
+    borderWidth: 1,
   },
 
-  // Progress bar
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: spacing.sm,
-  },
-  timeText: {
-    color: TEXT_PRIMARY,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  timeTextSmall: {
-    color: TEXT_MUTED,
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  heart: {
-    color: TEXT_PRIMARY,
-    fontSize: 24,
-    lineHeight: 28,
-  },
-  heartOn: {
-    color: '#FF4D6D',
+  progressHitArea: {
+    paddingVertical: 10,
+    marginTop: spacing.md,
   },
   progressTrack: {
     height: 4,
     borderRadius: 2,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    marginTop: 4,
-  },
-  progressHitArea: {
-    paddingVertical: 10,
   },
   progressFill: {
     height: '100%',
     borderRadius: 2,
-    backgroundColor: TEXT_PRIMARY,
   },
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 6,
   },
-  errorText: {
-    color: '#FF6B6B',
-    fontSize: 12,
-    marginTop: spacing.sm,
-    textAlign: 'center',
-  },
 
-  // Controls
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: spacing.md,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs,
   },
-  playButton: {
+  transportHit: {
+    width: 56,
+    height: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playDisc: {
     width: 76,
     height: 76,
     borderRadius: 38,
-    // Pure flat white. The button is a static View (not a Pressable),
-    // and is wrapped in a Pressable that handles only touch events
-    // (no backgroundColor, no styling that could change). The double
-    // border (outer 4px black + inner ring) makes the disc shape
-    // unmistakable on any background.
-    backgroundColor: '#FFFFFF',
-    borderWidth: 4,
-    borderColor: '#000000',
-    // Soft white inner ring just inside the border — visually
-    // separates the disc from the black border, kills any chance of
-    // anti-aliasing bleed that could read as a warm color.
-    // (Implemented via shadow on the inner Pressable: see below.)
-    shadowColor: '#000000',
-    shadowOpacity: 0.7,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   playButtonPressable: {
     width: '100%',
     height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    // Force transparent so no Android Pressable state can paint over
-    // the white disc. The white comes from the wrapping View above.
-    backgroundColor: 'transparent',
   },
-  playGlyph: {
-    color: '#000000',
-    fontSize: 32,
-    fontWeight: '900',
-    // No font-family here — system font for max cross-device consistency.
+  repeatOneBadge: {
+    position: 'absolute',
+    right: -2,
+    top: -2,
+    fontSize: 10,
+    fontWeight: '800',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 6,
+    paddingHorizontal: 3,
+    lineHeight: 12,
+    overflow: 'hidden',
   },
-  iconText: {
-    fontWeight: '700',
-  },
-
-  // Web background overflow guard
-  artBgWrap: { overflow: 'hidden' },
-  artBg: {
-    ...StyleSheet.absoluteFillObject,
-    transform: [{ scale: 1.2 }],
+  favoriteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    paddingVertical: spacing.xs,
   },
 });

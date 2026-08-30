@@ -1,52 +1,28 @@
 /**
- * Theme store.
- * Holds: current theme mode (dark / light / system) + hydration flag.
- * Persisted to AsyncStorage under one key. Single source of truth for the theme.
+ * Theme store — light only.
+ *
+ * The app has a single visual identity (light lavender). This store
+ * is kept as a thin stub so existing imports still resolve, but the
+ * mode is fixed to 'light' and `setMode` is a no-op.
  */
 import { create } from 'zustand';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ThemeMode } from '@/theme';
-import { logger } from '@/utils/logger';
-import { isWeb, isNative } from '@/theme';
 
-const STORAGE_KEY = 'music.theme.v1';
-// On web, AsyncStorage is a localStorage shim — same API.
+export type ThemeMode = 'light';
 
 interface ThemeState {
   mode: ThemeMode;
   hydrated: boolean;
-
   setMode: (mode: ThemeMode) => void;
   hydrate: () => Promise<void>;
 }
 
-export const useThemeStore = create<ThemeState>((set, get) => ({
+export const useThemeStore = create<ThemeState>((set) => ({
   mode: 'light',
-  hydrated: false,
-
-  setMode: (mode) => {
-    set({ mode });
-    persist(mode).catch((e) => logger.warn('themeStore: persist failed', { e: String(e) }));
-    logger.info('Theme mode set', { mode });
+  hydrated: true,
+  setMode: () => {
+    // no-op: the app is light only
   },
-
   hydrate: async () => {
-    if (get().hydrated) return;
-    try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      if (raw === 'dark' || raw === 'light' || raw === 'system') {
-        set({ mode: raw, hydrated: true });
-        logger.debug('themeStore: hydrated', { mode: raw, storage: isWeb ? 'localStorage' : isNative ? 'AsyncStorage' : 'unknown' });
-        return;
-      }
-      set({ hydrated: true });
-    } catch (e) {
-      logger.warn('themeStore: hydrate failed, using default', { e: String(e) });
-      set({ hydrated: true });
-    }
+    // no-op
   },
 }));
-
-async function persist(mode: ThemeMode): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEY, mode);
-}

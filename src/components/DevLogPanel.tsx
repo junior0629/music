@@ -13,10 +13,9 @@
  *
  * Reads from the same logger ring buffer as everything else.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { GlassCard } from './GlassCard';
-import { useColors, textStyle, spacing, radii } from '@/theme';
+import { useColors, useShadows, textStyle, spacing, radii } from '@/theme';
 import { logger, LogEntry, LogLevel } from '@/utils/logger';
 import { copyToClipboard, formatLogEntries } from '@/utils/clipboard';
 
@@ -33,7 +32,7 @@ function useLevelColors() {
     () => ({
       debug: colors.textMuted,
       info: colors.textSecondary,
-      warn: colors.accent,
+      warn: colors.primary,
       error: colors.danger,
     }),
     [colors],
@@ -49,6 +48,7 @@ const LEVEL_DOT: Record<LogLevel, string> = {
 
 export function DevLogSection(): React.ReactElement | null {
   const colors = useColors();
+  const shadows = useShadows();
   const levelColors = useLevelColors();
   const [entries, setEntries] = useState<LogEntry[]>(() => logger.getEntries());
   const [filter, setFilter] = useState<LevelFilter>('all');
@@ -71,6 +71,25 @@ export function DevLogSection(): React.ReactElement | null {
   const warnCount = entries.filter((e) => e.level === 'warn').length;
 
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
+  // Hold the "copied" reset timer in a ref so we can clear it on
+  // unmount. Without this, a tap-then-navigate-away fires the
+  // setState on an unmounted component (React warning) and leaks
+  // a timer.
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+    };
+  }, []);
+
+  const scheduleCopyReset = (): void => {
+    if (copyResetTimerRef.current) clearTimeout(copyResetTimerRef.current);
+    copyResetTimerRef.current = setTimeout(() => {
+      setCopyState('idle');
+      copyResetTimerRef.current = null;
+    }, 1500);
+  };
 
   const handleCopyAll = async () => {
     const dump = formatLogEntries(filtered);
@@ -78,7 +97,7 @@ export function DevLogSection(): React.ReactElement | null {
     if (ok) {
       setCopyState('copied');
       logger.info(`Copied ${filtered.length} log entries to clipboard`, { source: 'devlog' });
-      setTimeout(() => setCopyState('idle'), 1500);
+      scheduleCopyReset();
     }
   };
 
@@ -90,7 +109,7 @@ export function DevLogSection(): React.ReactElement | null {
     if (ok) {
       setCopyState('copied');
       logger.info('Copied last error to clipboard', { source: 'devlog' });
-      setTimeout(() => setCopyState('idle'), 1500);
+      scheduleCopyReset();
     }
   };
 
@@ -104,8 +123,8 @@ export function DevLogSection(): React.ReactElement | null {
       >
         DEVELOPER
       </Text>
-      <GlassCard padding={0} radius="lg">
-        <View style={[styles.header, { borderBottomColor: colors.glassBorder }]}>
+      <View style={[styles.card, { backgroundColor: colors.surface }, shadows.sm]}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <View style={{ flex: 1 }}>
             <Text style={[textStyle('heading'), { color: colors.textPrimary }]}>
               Dev log
@@ -121,7 +140,7 @@ export function DevLogSection(): React.ReactElement | null {
               label={copyState === 'copied' ? 'COPIED' : 'COPY'}
               onPress={handleCopyAll}
               disabled={filtered.length === 0}
-              accent={colors.accent}
+              accent={colors.primary}
               muted={colors.textMuted}
             />
             <HeaderAction
@@ -137,7 +156,7 @@ export function DevLogSection(): React.ReactElement | null {
               accessibilityLabel="Clear log context"
               style={({ pressed }) => [{ opacity: pressed ? 0.6 : 1, padding: 6 }]}
             >
-              <Text style={[textStyle('label'), { color: colors.accent }]}>CLEAR</Text>
+              <Text style={[textStyle('label'), { color: colors.primary }]}>CLEAR</Text>
             </Pressable>
           </View>
         </View>
@@ -152,8 +171,8 @@ export function DevLogSection(): React.ReactElement | null {
                 style={({ pressed }) => [
                   styles.filterChip,
                   {
-                    backgroundColor: active ? colors.accentSoft : colors.glassSurfaceSubtle,
-                    borderColor: active ? colors.glassBorderStrong : 'transparent',
+                    backgroundColor: active ? colors.lavenderSoft : colors.surfaceMuted,
+                    borderColor: active ? colors.borderStrong : 'transparent',
                     opacity: pressed ? 0.7 : 1,
                   },
                 ]}
@@ -163,7 +182,7 @@ export function DevLogSection(): React.ReactElement | null {
                 <Text
                   style={[
                     textStyle('label'),
-                    { color: active ? colors.accent : colors.textSecondary },
+                    { color: active ? colors.primary : colors.textSecondary },
                   ]}
                 >
                   {f.toUpperCase()}
@@ -188,7 +207,7 @@ export function DevLogSection(): React.ReactElement | null {
               .map((e) => <LogRow key={e.id} entry={e} levelColors={levelColors} />)
           )}
         </ScrollView>
-      </GlassCard>
+      </View>
     </View>
   );
 }
@@ -217,7 +236,7 @@ function LogRow({
         .join(' · ')
     : null;
   return (
-    <View style={[styles.row, { borderBottomColor: colors.glassBorder }]}>
+    <View style={[styles.row, { borderBottomColor: colors.border }]}>
       <Text style={[styles.rowTime, { color: colors.textMuted }]}>{ts}</Text>
       <Text style={[styles.rowLevel, { color: c }]}>{LEVEL_DOT[entry.level]}</Text>
       <View style={{ flex: 1 }}>
@@ -274,6 +293,10 @@ function HeaderAction({
 }
 
 const styles = StyleSheet.create({
+  card: {
+    borderRadius: radii.lg,
+    overflow: 'hidden',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
